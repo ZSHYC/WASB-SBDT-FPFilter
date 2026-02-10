@@ -8,10 +8,16 @@ python train_fp_filter.py ^
             patch_outputs/patches_train2/manifest.csv ^
             patch_outputs/patches_train3/manifest.csv ^
             patch_outputs/patches_train4/manifest.csv ^
+            patch_outputs/patches_train5/manifest.csv ^
+            patch_outputs/patches_train6_right/manifest.csv ^
+            patch_outputs/patches_train7_right/manifest.csv ^
+            patch_outputs/patches_train8_right/manifest.csv ^
+            patch_outputs/patches_train9_right/manifest.csv ^
+            patch_outputs/patches_train10_right/manifest.csv ^
   --out-dir patch_outputs/model_resnet ^
   --epochs 50
   
-python train_fp_filter.py --manifest patch_outputs/patches_train1/manifest.csv patch_outputs/patches_train2/manifest.csv patch_outputs/patches_train3/manifest.csv patch_outputs/patches_train4/manifest.csv --out-dir patch_outputs/model_resnet --epochs 50
+python train_fp_filter.py --manifest patch_outputs/patches_train1/manifest.csv patch_outputs/patches_train2/manifest.csv patch_outputs/patches_train3/manifest.csv patch_outputs/patches_train4/manifest.csv patch_outputs/patches_train5/manifest.csv patch_outputs/patches_train6_right/manifest.csv patch_outputs/patches_train7_right/manifest.csv patch_outputs/patches_train8_right/manifest.csv patch_outputs/patches_train9_right/manifest.csv patch_outputs/patches_train10_right/manifest.csv --out-dir patch_outputs/model_resnet --epochs 80
 """
 import os
 import sys

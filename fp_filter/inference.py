@@ -9,13 +9,13 @@ Step 2: 运行以下命令（请根据实际路径修改参数）
 
 默认文件夹在fp_filter下执行：cd fp_filter(别忘了！)
 python inference.py ^
-    --csv "../src/outputs/main/2026-02-06_16-46-34/match1_clip1_predictions.csv" ^
+    --csv "../src/outputs/main/2026-02-10_10-12-40/match1_clip1_predictions.csv" ^
     --dataset-root "../datasets/tennis_predict" ^
     --model "patch_outputs/model_resnet/best.pth" ^
     --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" ^
     --threshold 0.5
     
-python inference.py --csv "../src/outputs/main/2026-02-06_18-14-50/match1_clip1_predictions.csv" --dataset-root "../datasets/tennis_predict" --model "patch_outputs/model_resnet/best.pth" --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" --threshold 0.5
+python inference.py --csv "../src/outputs/main/2026-02-10_17-43-40/match1_clip1_predictions.csv" --dataset-root "../datasets/tennis_predict" --model "patch_outputs/model_resnet/best.pth" --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" --threshold 0.5
 """
 
 import os
@@ -43,7 +43,7 @@ except ImportError:
 DEFAULT_PATCH_SIZE = 128
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
-
+DEFAULT_PATCH_SIZE = 128
 
 def _parse_match_clip_from_csv_basename(csv_basename):
     """从 CSV 文件名解析 match 和 clip"""

@@ -19,14 +19,16 @@
 **功能**: 使用深度学习模型对图片序列进行球体检测
 
 **技术实现**:
+
 - 调用 `src/main.py`（基于 Hydra 配置系统）
-- 使用 WASB (Weakly-Supervised Ball Detection) 模型
+- 使用 WASB模型
 - 输入: 原始图片序列
-- 输出: 
+- 输出:
   - `*_predictions.csv`: 包含每帧的检测坐标、可见性、置信度
   - 可视化图片序列: 标注了检测结果的图片
 
 **核心配置**:
+
 ```yaml
 dataset: tennis_predict           # 数据集配置
 model: wasb                       # 使用 WASB 模型
@@ -36,6 +38,7 @@ runner.vis_result: True           # 生成可视化
 ```
 
 **关键技术**:
+
 - **Heatmap-based Detection**: 模型输出热力图，峰值位置为球的可能位置
 - **Temporal Smoothing**: 利用前后帧信息平滑检测结果
 - **Multi-scale Processing**: 处理不同距离和大小的球
@@ -47,6 +50,7 @@ runner.vis_result: True           # 生成可视化
 **功能**: 使用二分类模型识别并剔除误检结果
 
 **技术实现**:
+
 - 调用 `fp_filter/inference.py`
 - 使用 ResNet-18 二分类模型
 - 输入:
@@ -57,6 +61,7 @@ runner.vis_result: True           # 生成可视化
   - 误检点的 `visibility` 被置为 0
 
 **工作流程**:
+
 ```
 对于 CSV 中每个 visibility=1 的检测点:
   1. 从原始图片中提取以 (x,y) 为中心的 128×128 patch
@@ -69,11 +74,13 @@ runner.vis_result: True           # 生成可视化
 ```
 
 **模型架构**:
+
 - **Backbone**: ResNet-18 (ImageNet 预训练)
 - **输入**: 128×128 RGB patch
 - **输出**: 2-class softmax (真球 vs 误检)
 
 **Patch 提取**:
+
 ```python
 # 伪代码
 center_x, center_y = detection_point
@@ -91,6 +98,7 @@ patch = image[
 **功能**: 生成对比视频，直观展示原始检测和过滤后的结果
 
 **技术实现**:
+
 - 调用 `fp_filter/visualize_filtered.py`
 - 输入:
   - Stage 1 的原始 CSV
@@ -100,6 +108,7 @@ patch = image[
   - MP4 视频文件
 
 **可视化方案**:
+
 ```
 对于每一帧:
   1. 读取原始检测 (从 original_csv)
@@ -111,6 +120,7 @@ patch = image[
 ```
 
 **视频编码**:
+
 - 使用 OpenCV VideoWriter
 - 编码格式: MP4 (H.264)
 - 可自定义帧率 (默认 25 fps)
@@ -251,11 +261,11 @@ num_workers: 4          # 数据加载并行度
 
 通过 `--step` 参数控制检测密度：
 
-| Step | 含义 | 性能 | 精度 |
-|------|------|------|------|
-| 1 | 逐帧检测 | 慢 | 最高 |
-| 3 | 每3帧检测 | 中 | 高 |
-| 5 | 每5帧检测 | 快 | 中 |
+| Step | 含义      | 性能 | 精度 |
+| ---- | --------- | ---- | ---- |
+| 1    | 逐帧检测  | 慢   | 最高 |
+| 3    | 每3帧检测 | 中   | 高   |
+| 5    | 每5帧检测 | 快   | 中   |
 
 ### 3. GPU 加速
 
@@ -350,10 +360,10 @@ for csv_file in csv_files:
 
 Pipeline 脚本**不修改**任何原有脚本，完全通过参数传递实现功能：
 
-| 原脚本 | 调用方式 | 修改 |
-|--------|---------|------|
-| `src/main.py` | subprocess + Hydra 参数 | ❌ 无需修改 |
-| `fp_filter/inference.py` | subprocess + 命令行参数 | ❌ 无需修改 |
+| 原脚本                              | 调用方式                | 修改        |
+| ----------------------------------- | ----------------------- | ----------- |
+| `src/main.py`                     | subprocess + Hydra 参数 | ❌ 无需修改 |
+| `fp_filter/inference.py`          | subprocess + 命令行参数 | ❌ 无需修改 |
 | `fp_filter/visualize_filtered.py` | subprocess + 命令行参数 | ❌ 无需修改 |
 
 ---

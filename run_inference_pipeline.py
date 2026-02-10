@@ -474,7 +474,7 @@ def parse_args():
     parser.add_argument(
         '--step',
         type=int,
-        default=3,
+        default=1,
         help='WASB 检测步长（1=逐帧检测，3=每3帧检测一次）'
     )
     

@@ -29,6 +29,7 @@ datasets/tennis_predict/
 ```
 
 **注意事项：**
+
 - 图片文件名格式：`0001.jpg`, `0002.jpg` 等（4位数字+.jpg）
 - 必须包含在 `match/clip` 两层目录结构中
 - 如果有多个 match 或 clip，可以按同样结构添加
@@ -74,25 +75,25 @@ python run_inference_pipeline.py --help
 
 ### 输入路径参数
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--dataset-root` | `datasets/tennis_predict` | 原始数据集根目录 |
-| `--wasb-weight` | `pretrained_weights/wasb_tennis_best.pth.tar` | WASB 模型权重文件 |
-| `--fp-model` | `fp_filter/patch_outputs/model_resnet/best.pth` | FP 过滤器模型权重 |
+| 参数               | 默认值                                            | 说明              |
+| ------------------ | ------------------------------------------------- | ----------------- |
+| `--dataset-root` | `datasets/tennis_predict`                       | 原始数据集根目录  |
+| `--wasb-weight`  | `pretrained_weights/wasb_tennis_best.pth.tar`   | WASB 模型权重文件 |
+| `--fp-model`     | `fp_filter/patch_outputs/model_resnet/best.pth` | FP 过滤器模型权重 |
 
 ### 输出路径参数
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
+| 参数              | 默认值               | 说明                                            |
+| ----------------- | -------------------- | ----------------------------------------------- |
 | `--output-base` | `pipeline_outputs` | Pipeline 输出基础目录（会自动添加时间戳子目录） |
 
 ### 推理参数
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--step` | `3` | WASB 检测步长。`1`=逐帧检测（精确但慢），`3`=每3帧检测一次（快速） |
-| `--threshold` | `0.5` | FP 过滤器阈值（0-1）。越高越严格，会过滤掉更多检测点 |
-| `--fps` | `25` | 输出视频帧率 |
+| 参数            | 默认值  | 说明                                                                   |
+| --------------- | ------- | ---------------------------------------------------------------------- |
+| `--step`      | `1`   | WASB 检测步长。`1`=逐帧检测（精确但慢），`3`=每3帧检测一次（快速） |
+| `--threshold` | `0.5` | FP 过滤器阈值（0-1）。越高越严格，会过滤掉更多检测点                   |
+| `--fps`       | `25`  | 输出视频帧率                                                           |
 
 ---
 
@@ -140,7 +141,7 @@ python run_inference_pipeline.py ^
     --wasb-weight "pretrained_weights/wasb_tennis_best.pth.tar" ^
     --fp-model "fp_filter/patch_outputs/model_resnet/best.pth" ^
     --output-base "pipeline_outputs" ^
-    --step 3 ^
+    --step 1 ^
     --threshold 0.5 ^
     --fps 25
 ```
@@ -176,12 +177,12 @@ pipeline_outputs/
 #### Stage 1: WASB 检测结果
 
 - **CSV 文件** (`*_predictions.csv`): 包含每帧的检测结果
+
   - `file name`: 图片文件名
   - `x-coordinate`: 检测到的球的 x 坐标
   - `y-coordinate`: 检测到的球的 y 坐标
   - `visibility`: 可见性（0=不可见，1=可见）
   - `score`: 检测置信度分数
-
 - **可视化图片**: 每张图片显示左侧为真实标注（如果有），右侧为检测结果
 
 #### Stage 2: FP 过滤结果
@@ -208,7 +209,8 @@ pipeline_outputs/
 FileNotFoundError: 数据集目录不存在: datasets/tennis_predict
 ```
 
-**解决方案**: 
+**解决方案**:
+
 - 检查数据集路径是否正确
 - 使用 `--dataset-root` 参数指定正确路径
 
@@ -219,6 +221,7 @@ FileNotFoundError: WASB 权重文件不存在: pretrained_weights/wasb_tennis_be
 ```
 
 **解决方案**:
+
 - 确认模型文件已下载到正确位置
 - 参考 `MODEL_ZOO.md` 下载模型权重
 
@@ -229,10 +232,12 @@ FileNotFoundError: WASB 权重文件不存在: pretrained_weights/wasb_tennis_be
 ```
 
 **可能原因**:
+
 - 数据集目录结构不符合要求（必须是 `match/clip/图片` 结构）
 - `tennis_predict.yaml` 配置文件设置不正确
 
 **解决方案**:
+
 - 检查 `src/configs/dataset/tennis_predict.yaml`
 - 确保 `test.matches` 设置为 `'all'` 或包含你的 match 名称
 
@@ -243,6 +248,7 @@ RuntimeError: CUDA out of memory
 ```
 
 **解决方案**:
+
 - 使用更大的 `--step` 值（如 `--step 5`）减少批量大小
 - 或者在代码中修改 batch_size（需要修改配置文件）
 
@@ -253,10 +259,12 @@ RuntimeError: CUDA out of memory
 ```
 
 **可能原因**:
+
 - Stage 1 的可视化图片未正确生成
 - OpenCV 视频编码器问题
 
 **解决方案**:
+
 - 检查 Stage 1 输出目录中是否有图片文件
 - 尝试安装 `opencv-python-headless` 或更新 OpenCV
 
@@ -280,6 +288,7 @@ python run_inference_pipeline.py --dataset-root "datasets/match3"
 如果只想重新运行某个阶段，可以直接调用对应脚本：
 
 **重新运行 Stage 2 (FP 过滤)**:
+
 ```bash
 cd fp_filter
 python inference.py ^
@@ -291,6 +300,7 @@ python inference.py ^
 ```
 
 **重新运行 Stage 3 (可视化)**:
+
 ```bash
 cd fp_filter
 python visualize_filtered.py ^
@@ -303,11 +313,11 @@ python visualize_filtered.py ^
 
 ### 3. 性能优化建议
 
-| 场景 | 推荐配置 | 说明 |
-|------|---------|------|
-| 快速预览 | `--step 5` | 每5帧检测一次，速度快但可能漏检 |
-| 标准检测 | `--step 3` | 推荐配置，平衡速度和精度 |
-| 高精度分析 | `--step 1` | 逐帧检测，最准确但耗时 |
+| 场景       | 推荐配置     | 说明                            |
+| ---------- | ------------ | ------------------------------- |
+| 快速预览   | `--step 5` | 每5帧检测一次，速度快但可能漏检 |
+| 标准检测   | `--step 3` | 推荐配置，平衡速度和精度        |
+| 高精度分析 | `--step 1` | 逐帧检测，最准确但耗时          |
 
 ---
 
@@ -345,6 +355,7 @@ python run_inference_pipeline.py
 ```
 
 **优势**:
+
 - ✅ 一行命令完成全流程
 - ✅ 自动处理路径依赖关系
 - ✅ 统一的输出目录管理
@@ -392,11 +403,11 @@ python run_inference_pipeline.py *>&1 | Tee-Object -FilePath pipeline.log
 
 测试环境：Intel i7-10700K, NVIDIA RTX 3080, 16GB RAM
 
-| 数据量 | Step | Stage 1 | Stage 2 | Stage 3 | 总耗时 |
-|-------|------|---------|---------|---------|--------|
-| 500 帧 | 3 | ~2 分钟 | ~30 秒 | ~1 分钟 | ~3.5 分钟 |
-| 1000 帧 | 3 | ~4 分钟 | ~1 分钟 | ~2 分钟 | ~7 分钟 |
-| 500 帧 | 1 | ~5 分钟 | ~30 秒 | ~1 分钟 | ~6.5 分钟 |
+| 数据量  | Step | Stage 1 | Stage 2 | Stage 3 | 总耗时    |
+| ------- | ---- | ------- | ------- | ------- | --------- |
+| 500 帧  | 3    | ~2 分钟 | ~30 秒  | ~1 分钟 | ~3.5 分钟 |
+| 1000 帧 | 3    | ~4 分钟 | ~1 分钟 | ~2 分钟 | ~7 分钟   |
+| 500 帧  | 1    | ~5 分钟 | ~30 秒  | ~1 分钟 | ~6.5 分钟 |
 
 ---
 
@@ -410,17 +421,7 @@ python run_inference_pipeline.py *>&1 | Tee-Object -FilePath pipeline.log
 4. **日志信息**: 查看详细的错误日志定位问题
 
 如需进一步帮助，请参考项目其他文档：
+
 - `README.md`: 项目总体说明
 - `GET_STARTED.md`: 入门指南
 - `fp_filter/FP过滤二分类使用说明_UPDATED.md`: FP 过滤器详细说明
-
----
-
-## 更新日志
-
-### v1.0 (2026-02-10)
-- ✨ 初始版本
-- ✅ 支持完整三阶段 Pipeline
-- ✅ 自动化路径管理
-- ✅ 详细日志输出
-- ✅ 参数化配置

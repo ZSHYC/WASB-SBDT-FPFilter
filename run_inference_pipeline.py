@@ -50,42 +50,52 @@ class InferencePipeline:
         Args:
             args: 命令行参数对象
         """
+        # 保存传入的命令行参数对象，后续方法读取配置
         self.args = args
-        
-        # 项目根目录（脚本所在目录）
+
+        # 项目根目录：使用脚本文件的父目录作为项目根（跨平台可靠）
+        # Path(__file__).parent.absolute() 返回脚本所在目录的绝对路径
         self.root_dir = Path(__file__).parent.absolute()
-        
-        # 关键路径
+
+        # 将命令行传入的相对路径转换为以项目根为基准的 Path 对象
+        # 例如 args.dataset_root 默认是 'datasets/tennis_predict'
         self.dataset_root = self.root_dir / args.dataset_root
         self.wasb_weight = self.root_dir / args.wasb_weight
         self.fp_model = self.root_dir / args.fp_model
-        
-        # 输出目录（带时间戳）
+
+        # 生成输出目录，使用时间戳保证每次运行的目录唯一，便于追溯
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # output_base 默认 'pipeline_outputs'，最终路径为 <root>/pipeline_outputs/<timestamp>
         self.output_dir = self.root_dir / args.output_base / timestamp
+        # 创建目录（存在也不报错）
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 阶段性输出目录
+
+        # 为三个阶段分别创建子目录路径变量（实际创建通常在各阶段开始时）
         self.stage1_output = self.output_dir / "stage1_wasb_detection"
         self.stage2_output = self.output_dir / "stage2_fp_filtered"
         self.stage3_output = self.output_dir / "stage3_visualizations"
-        
+
+        # 打印输出目录信息，方便用户查看
         log.info(f"Pipeline 输出目录: {self.output_dir}")
-        
-        # 验证必要文件存在
+
+        # 在继续执行之前检查必要的文件和目录是否存在（如数据集、模型权重）
         self._validate_prerequisites()
     
     def _validate_prerequisites(self):
         """验证必要的文件和目录是否存在"""
+        # 检查数据集目录是否存在，否则直接抛出错误并中断
         if not self.dataset_root.exists():
             raise FileNotFoundError(f"数据集目录不存在: {self.dataset_root}")
-        
+
+        # 检查 WASB 模型权重文件是否存在
         if not self.wasb_weight.exists():
             raise FileNotFoundError(f"WASB 权重文件不存在: {self.wasb_weight}")
-        
+
+        # 检查 FP 过滤器模型权重是否存在
         if not self.fp_model.exists():
             raise FileNotFoundError(f"FP 过滤器模型不存在: {self.fp_model}")
-        
+
+        # 所有前置条件满足，记录日志
         log.info("✓ 所有必要文件验证通过")
     
     def run(self):
@@ -95,35 +105,37 @@ class InferencePipeline:
         log.info("="*80)
         
         try:
-            # Stage 1: WASB 检测
+            # 依次执行三个阶段的方法。
+            # 每个阶段返回 True/False 表示是否成功，失败则提前终止 Pipeline
             stage1_success = self._run_stage1_wasb_detection()
             if not stage1_success:
+                # 如果 Stage 1 失败（例如未生成 CSV），记录错误并停止
                 log.error("Stage 1 失败，终止 Pipeline")
                 return False
-            
-            # Stage 2: FP 过滤
+
             stage2_success = self._run_stage2_fp_filtering()
             if not stage2_success:
                 log.error("Stage 2 失败，终止 Pipeline")
                 return False
-            
-            # Stage 3: 可视化
+
             stage3_success = self._run_stage3_visualization()
             if not stage3_success:
                 log.error("Stage 3 失败")
                 return False
-            
+
+            # 所有阶段成功完成，打印成功信息
             log.info("="*80)
             log.info("✓ Pipeline 执行成功完成！")
             log.info(f"所有结果保存在: {self.output_dir}")
             log.info("="*80)
-            
-            # 打印结果摘要
+
+            # 打印摘要信息，便于用户查看结果统计
             self._print_summary()
-            
+
             return True
-            
+
         except Exception as e:
+            # 捕获任意未处理的异常并记录堆栈信息，便于调试
             log.error(f"Pipeline 执行出错: {e}", exc_info=True)
             return False
     
@@ -138,59 +150,73 @@ class InferencePipeline:
         log.info("Stage 1: WASB 球检测")
         log.info("="*80)
         
+        # 确保 Stage1 输出目录存在
         self.stage1_output.mkdir(parents=True, exist_ok=True)
-        
-        # 构建命令
+
+        # src_dir 指向项目中的 src 目录，我们将在该目录下运行 src/main.py
         src_dir = self.root_dir / "src"
-        
-        # Hydra 配置：指定输出目录
+
+        # 将 Stage1 的输出目录传给 Hydra，使得 src/main.py 将输出写入该目录
+        # 使用 as_posix() 生成统一的路径格式，避免反斜杠转义问题
         hydra_output = self.stage1_output.as_posix()
-        
+
+        # 构建要执行的子进程命令，使用当前 Python 解释器（sys.executable）
+        # 这里通过向 main.py 传入 CLI 覆盖项来控制数据集、模型路径、步长等
         cmd = [
-            sys.executable,  # 使用当前 Python 解释器
-            "main.py",
-            "--config-name=eval",
+            sys.executable,            # 当前 Python 可执行文件路径
+            "main.py",               # 要执行的脚本（位于 src/ 下）
+            "--config-name=eval",   # 指定使用的 Hydra 配置
             f"dataset=tennis_predict",
             f"model=wasb",
             f"detector.model_path={self.wasb_weight.as_posix()}",
             f"runner.split=test",
             f"runner.vis_result=True",
             f"detector.step={self.args.step}",
-            f"hydra.run.dir={hydra_output}",  # 指定输出目录
+            f"hydra.run.dir={hydra_output}",  # 覆盖 Hydra 输出目录
         ]
-        
+
+        # 记录将执行的命令与工作目录，便于排查
         log.info(f"执行命令: {' '.join(cmd)}")
         log.info(f"工作目录: {src_dir}")
-        
+
         try:
+            # 以子进程方式运行 src/main.py，capture_output=True 用于捕获 stdout/stderr
             result = subprocess.run(
                 cmd,
-                cwd=str(src_dir),
-                check=True,
-                capture_output=True,
-                text=True,
+                cwd=str(src_dir),          # 在 src 目录下执行命令
+                check=True,                # 子进程返回非0时抛出 CalledProcessError
+                capture_output=True,       # 捕获输出方便日志记录
+                text=True,                 # 将输出解码为文本（不是 bytes）
                 encoding='utf-8',
                 errors='ignore'
             )
-            
+
+            # 将子进程的标准输出逐行记录到日志中（避免大量一次性输出）
             log.info("Stage 1 输出:")
             for line in result.stdout.split('\n'):
                 if line.strip():
                     log.info(f"  {line}")
-            
-            # 查找生成的 CSV 文件
+
+            # 如果有 stderr 输出也记录，便于诊断（某些脚本会把重要信息写到 stderr）
+            if result.stderr and result.stderr.strip():
+                log.warning("Stage 1 stderr:\n" + result.stderr.strip())
+
+            # 扫描指定输出目录下的 *_predictions.csv 文件以确认生成结果
             csv_files = list(self.stage1_output.glob("*_predictions.csv"))
             if not csv_files:
+                # 若没有找到 CSV，说明可能主脚本运行时出错或配置不匹配
                 log.error("未找到生成的 predictions.csv 文件")
                 return False
-            
+
+            # 列出生成的 CSV 文件，便于用户核对
             log.info(f"✓ Stage 1 完成，生成了 {len(csv_files)} 个检测结果文件")
             for csv_file in csv_files:
                 log.info(f"  - {csv_file.name}")
-            
+
             return True
-            
+
         except subprocess.CalledProcessError as e:
+            # 子进程执行失败时打印错误信息（包括 stderr）以便定位问题
             log.error(f"Stage 1 执行失败: {e}")
             log.error(f"错误输出: {e.stderr}")
             return False
@@ -206,25 +232,29 @@ class InferencePipeline:
         log.info("Stage 2: FP 误检过滤")
         log.info("="*80)
         
+        # 确保 Stage2 输出目录存在
         self.stage2_output.mkdir(parents=True, exist_ok=True)
-        
-        # 查找所有待处理的 CSV 文件
+
+        # 从 Stage1 目录查找所有需要处理的 predictions.csv
         csv_files = list(self.stage1_output.glob("*_predictions.csv"))
-        
+
         if not csv_files:
+            # 没有找到 CSV，说明 Stage1 可能没有成功
             log.error("Stage 1 未生成任何 CSV 文件")
             return False
-        
+
         success_count = 0
+        # FP 过滤脚本所在目录（我们将在该目录下执行 inference.py）
         fp_filter_dir = self.root_dir / "fp_filter"
-        
+
+        # 遍历每个 CSV 文件并调用 fp_filter/inference.py 进行二分类过滤
         for csv_file in csv_files:
             log.info(f"\n处理: {csv_file.name}")
-            
-            # 生成输出文件名
+
+            # 构建过滤后输出文件名，例如 xxx_predictions_filtered.csv
             output_csv = self.stage2_output / csv_file.name.replace("_predictions.csv", "_predictions_filtered.csv")
-            
-            # 构建命令
+
+            # 构造子进程命令：在 fp_filter 目录下执行 inference.py
             cmd = [
                 sys.executable,
                 "inference.py",
@@ -234,10 +264,11 @@ class InferencePipeline:
                 "--output", output_csv.as_posix(),
                 "--threshold", str(self.args.threshold),
             ]
-            
+
             log.info(f"执行命令: {' '.join(cmd)}")
-            
+
             try:
+                # 调用子进程并捕获输出
                 result = subprocess.run(
                     cmd,
                     cwd=str(fp_filter_dir),
@@ -247,22 +278,33 @@ class InferencePipeline:
                     encoding='utf-8',
                     errors='ignore'
                 )
-                
-                # 打印关键输出信息
+
+                # 从子进程输出中筛选关键字（中文或英文）并记录到日志
                 for line in result.stdout.split('\n'):
                     if any(keyword in line for keyword in ['过滤', '保留', '移除', 'Filtered', 'Removed']):
                         log.info(f"  {line}")
-                
-                log.info(f"✓ 已生成: {output_csv.name}")
-                success_count += 1
-                
+
+                # 如果子进程在 stderr 中有信息，也记录出来以便排查
+                if result.stderr and result.stderr.strip():
+                    log.warning("子进程 stderr:\n" + result.stderr.strip())
+
+                # 确认 output_csv 文件已实际生成；只有存在时才计为成功
+                if output_csv.exists():
+                    log.info(f"✓ 已生成: {output_csv.name}")
+                    success_count += 1
+                else:
+                    # 如果预期的输出文件不存在，则记录警告并继续（可能 inference.py 保存到其他位置）
+                    log.warning(f"子进程执行成功但未找到输出文件: {output_csv.as_posix()}")
+
             except subprocess.CalledProcessError as e:
+                # 若某个 CSV 的处理失败，记录错误并继续处理下一个文件
                 log.error(f"处理 {csv_file.name} 失败: {e}")
                 log.error(f"错误输出: {e.stderr}")
-        
+
         if success_count == 0:
+            # 所有文件均处理失败，返回 False
             return False
-        
+
         log.info(f"\n✓ Stage 2 完成，成功处理 {success_count}/{len(csv_files)} 个文件")
         return True
     
@@ -277,46 +319,50 @@ class InferencePipeline:
         log.info("Stage 3: 结果可视化")
         log.info("="*80)
         
+        # 确保 Stage3 输出目录存在
         self.stage3_output.mkdir(parents=True, exist_ok=True)
-        
-        # 查找过滤后的 CSV 文件
+
+        # 查找所有在 Stage2 生成的过滤后 CSV
         filtered_csv_files = list(self.stage2_output.glob("*_filtered.csv"))
-        
+
         if not filtered_csv_files:
             log.error("Stage 2 未生成任何过滤后的 CSV 文件")
             return False
-        
+
         success_count = 0
+        # visualize 脚本也在 fp_filter 目录下
         fp_filter_dir = self.root_dir / "fp_filter"
-        
+
         for filtered_csv in filtered_csv_files:
             log.info(f"\n可视化: {filtered_csv.name}")
-            
-            # 找到对应的原始 CSV
+
+            # 根据过滤后的文件名推理出原始 CSV 名称（替换后缀）
             original_name = filtered_csv.name.replace("_filtered.csv", ".csv")
             original_csv = self.stage1_output / original_name
-            
+
+            # 如果找不到原始 CSV，就无法可视化，跳过该文件
             if not original_csv.exists():
                 log.warning(f"找不到原始 CSV: {original_csv.name}，跳过")
                 continue
-            
-            # 生成视频文件名
+
+            # 生成输出视频路径，文件名示例: match1_clip1_final_result.mp4
             video_name = filtered_csv.stem.replace("_predictions_filtered", "_final_result.mp4")
             output_video = self.stage3_output / video_name
-            
-            # 构建命令
+
+            # 构建调用 visualize_filtered.py 的命令
+            # 注意：--dataset-root 传入的是 Stage1 的输出目录（其中包含可视化帧）
             cmd = [
                 sys.executable,
                 "visualize_filtered.py",
                 "--csv", original_csv.as_posix(),
                 "--filtered-csv", filtered_csv.as_posix(),
-                "--dataset-root", self.stage1_output.as_posix(),  # 注意：这里使用 Stage 1 的输出作为图像源
+                "--dataset-root", self.stage1_output.as_posix(),
                 "--output-video", output_video.as_posix(),
                 "--fps", str(self.args.fps),
             ]
-            
+
             log.info(f"执行命令: {' '.join(cmd)}")
-            
+
             try:
                 result = subprocess.run(
                     cmd,
@@ -327,25 +373,32 @@ class InferencePipeline:
                     encoding='utf-8',
                     errors='ignore'
                 )
-                
-                # 打印进度信息
+
+                # 过滤输出中常见的表示“保存/生成”关键字用于记录
                 for line in result.stdout.split('\n'):
                     if any(keyword in line for keyword in ['保存', 'Saved', '生成', 'Generated', '完成']):
                         log.info(f"  {line}")
-                
+
+                # 如果子进程在 stderr 中有信息，也记录出来以便排查
+                if result.stderr and result.stderr.strip():
+                    log.warning("子进程 stderr:\n" + result.stderr.strip())
+
+                # 子进程返回后检查文件是否实际生成
                 if output_video.exists():
                     log.info(f"✓ 视频已生成: {output_video.name}")
                     success_count += 1
                 else:
+                    # 如果脚本看似成功但文件不存在，记录警告以便调查
                     log.warning(f"视频文件未生成: {output_video.name}")
-                
+
             except subprocess.CalledProcessError as e:
+                # 某个可视化任务失败时记录错误并继续处理其他文件
                 log.error(f"可视化 {filtered_csv.name} 失败: {e}")
                 log.error(f"错误输出: {e.stderr}")
-        
+
         if success_count == 0:
             return False
-        
+
         log.info(f"\n✓ Stage 3 完成，成功生成 {success_count}/{len(filtered_csv_files)} 个视频")
         return True
     

@@ -10,3 +10,5 @@ outputs/
 reports/
 organized_outputs/
 patch_outputs/
+pipeline_outputs/
+pipeline_outputs_test/

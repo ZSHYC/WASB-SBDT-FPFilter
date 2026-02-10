@@ -6,7 +6,7 @@
 
 ## 一、项目与 WASB 模型简要说明
 
-- **项目**：WASB-SBDT（Widely Applicable Strong Baseline for Sports Ball Detection and Tracking），用于多类运动的球检测与跟踪。
+- **项目**：WASB-SBDT-FPFilter（Widely Applicable Strong Baseline for Sports Ball Detection and Tracking + FP Filter），用于多类运动的球检测与跟踪。
 - **你只用 WASB 模型**：WASB 基于 HRNet，输入为连续多帧图像，输出为热图，再经后处理得到球心坐标与可见性。
 - **入口**：`src/main.py` 默认用 Hydra 加载 `config_name=eval`，即**评估/推理**流程（不训练）。
 

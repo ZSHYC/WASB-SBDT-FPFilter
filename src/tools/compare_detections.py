@@ -346,4 +346,4 @@ if __name__ == "__main__":
     main()
 
 
-# python d:\Personal\Desktop\WASB-SBDT\src\tools\compare_detections.py --wasb-root "D:\Personal\Desktop\WASB-SBDT\wasb_outputs" --yolo-root "D:\Personal\Desktop\yolo\yolo_output" --out-csv "D:\Personal\Desktop\WASB-SBDT\reports\detection_comparison.csv"
+# python d:\Personal\Desktop\WASB-SBDT-FPFilter\src\tools\compare_detections.py --wasb-root "D:\Personal\Desktop\WASB-SBDT-FPFilter\wasb_outputs" --yolo-root "D:\Personal\Desktop\yolo\yolo_output" --out-csv "D:\Personal\Desktop\WASB-SBDT-FPFilter\reports\detection_comparison.csv"

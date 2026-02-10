@@ -1,4 +1,4 @@
-# WASB-SBDT — 项目说明（中文）
+# WASB-SBDT-FPFilter — 项目说明（中文）
 
 论文链接：**[Widely Applicable Strong Baseline for Sports Ball Detection and Tracking](https://arxiv.org/abs/2311.05237)**
 
@@ -9,7 +9,7 @@
 本中文版 README 为项目中文文档。英文版本在 `README_en.md`。
 
 ## 概述
-WASB-SBDT 是用于多类体育项目（网球、足球、羽毛球、排球、篮球等）中小目标（球）检测与跟踪的基线实现。本仓库包含评估代码、示例数据、预训练权重、FP 过滤工具以及新增的一键推理 Pipeline（WASB 检测 → FP 过滤 → 可视化）。
+WASB-SBDT-FPFilter 是用于多类体育项目（网球、足球、羽毛球、排球、篮球等）中小目标（球）检测与跟踪的基线实现。本仓库包含评估代码、示例数据、预训练权重、FP 过滤工具以及新增的一键推理 Pipeline（WASB 检测 → FP 过滤 → 可视化）。
 
 主要功能：
 - 基于 Hydra 的配置驱动评估（`src/main.py`）

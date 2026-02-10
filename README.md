@@ -1,6 +1,6 @@
-# WASB-SBDT — README 语言选择 / Language Selector
+# WASB-SBDT-FPFilter — README 语言选择 / Language Selector
 
-[![README Sync](https://github.com/nttcom/WASB-SBDT/actions/workflows/readme_sync.yml/badge.svg)](https://github.com/nttcom/WASB-SBDT/actions/workflows/readme_sync.yml)
+[![README Sync](https://github.com/nttcom/WASB-SBDT-FPFilter/actions/workflows/readme_sync.yml/badge.svg)](https://github.com/nttcom/WASB-SBDT-FPFilter/actions/workflows/readme_sync.yml)
 
 选择你的语言 / Choose your language:
 

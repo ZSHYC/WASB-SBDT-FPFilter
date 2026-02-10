@@ -22,12 +22,12 @@ organize_comparisons.py
 如何运行（示例）：
 python src/tools/organize_comparisons.py \
   --comparison-csv "reports/detection_comparison.csv" \
-  --wasb-root "D:/Personal/Desktop/WASB-SBDT/wasb_outputs" \
+  --wasb-root "D:/Personal/Desktop/WASB-SBDT-FPFilter/wasb_outputs" \
   --yolo-root "D:/Personal/Desktop/yolo/yolo_output" \
-  --out-root "D:/Personal/Desktop/WASB-SBDT/organized_outputs"
+  --out-root "D:/Personal/Desktop/WASB-SBDT-FPFilter/organized_outputs"
   
 使用：
-python src/tools/organize_comparisons.py --comparison-csv "reports/detection_comparison.csv" --wasb-root "D:/Personal/Desktop/WASB-SBDT/wasb_outputs" --yolo-root "D:/Personal/Desktop/yolo/yolo_output" --out-root "D:/Personal/Desktop/WASB-SBDT/organized_outputs"  
+python src/tools/organize_comparisons.py --comparison-csv "reports/detection_comparison.csv" --wasb-root "D:/Personal/Desktop/WASB-SBDT-FPFilter/wasb_outputs" --yolo-root "D:/Personal/Desktop/yolo/yolo_output" --out-root "D:/Personal/Desktop/WASB-SBDT-FPFilter/organized_outputs"  
 
 注意：脚本只会在源文件存在时复制对应的比较图；若某一方的比较图找不到，
 会根据用户要求跳过（即不强制从另一位置生成或替代）。

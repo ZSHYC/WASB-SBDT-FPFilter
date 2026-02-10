@@ -1,4 +1,4 @@
-# WASB-SBDT — Widely Applicable Strong Baseline for Sports Ball Detection and Tracking (English)
+# WASB-SBDT-FPFilter — Widely Applicable Strong Baseline for Sports Ball Detection and Tracking (English)
 
 Repository for the paper: **[Widely Applicable Strong Baseline for Sports Ball Detection and Tracking](https://arxiv.org/abs/2311.05237)**
 
@@ -11,7 +11,7 @@ Shuhei Tarashima, Muhammad Abdul Haq, Yushan Wang, Norio Tagawa
 This English README is the canonical English-language documentation. A Chinese translation is available at [README_zh.md](README_zh.md).
 
 ## Overview
-WASB-SBDT is a configurable baseline for sports ball detection & tracking across multiple sports (tennis, soccer, badminton, volleyball, basketball). This repository includes evaluation code, datasets, pretrained weights, and tools — plus a new end-to-end inference pipeline to automate detection, FP filtering and visualization.
+WASB-SBDT-FPFilter is a configurable baseline for sports ball detection & tracking across multiple sports (tennis, soccer, badminton, volleyball, basketball). This repository includes evaluation code, datasets, pretrained weights, and tools — plus a new end-to-end inference pipeline to automate detection, FP filtering and visualization.
 
 Key components:
 - Config-driven evaluation via Hydra (`src/main.py`)

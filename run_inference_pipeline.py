@@ -18,8 +18,6 @@
         --fps 25 ^
         --step 3
 
-作者：GitHub Copilot
-日期：2026-02-10
 """
 
 import os

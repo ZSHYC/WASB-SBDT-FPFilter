@@ -12,3 +12,5 @@ organized_outputs/
 patch_outputs/
 pipeline_outputs/
 pipeline_outputs_test/
+hybrid_outputs/
+clip1_yolo/

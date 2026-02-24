@@ -1,11 +1,12 @@
 """
-完整推理 Pipeline：WASB 球检测 -> FP 过滤 -> 结果可视化 -> YOLO 标签生成
+完整推理 Pipeline：WASB 球检测 -> FP 过滤 -> 结果可视化 -> YOLO 标签生成 -> 原图尺度标签生成
 
-此脚本自动串联四个步骤：
+此脚本自动串联五个步骤：
 1. 运行 WASB 模型对新数据集进行初步检测（src/main.py）
 2. 使用 FP 过滤器剔除误检（fp_filter/inference.py）
 3. 生成对比可视化视频（fp_filter/visualize_filtered.py）
 4. 将过滤后的 CSV 转换为逐帧 YOLO txt 标签（fp_filter/csv_to_yolo_txt.py）
+5. 将过滤后的 CSV 转换为原图尺度 YOLO txt 标签（fp_filter/csv_to_original_yolo.py）
 
 使用示例：
     python run_inference_pipeline.py
@@ -17,9 +18,11 @@
         --fp-model "fp_filter/patch_outputs/model_resnet/best.pth" ^
         --output-base "pipeline_outputs" ^
         --fps 25 ^
-        --step 3 ^
+        --step 1 ^
         --box-size 15 ^
-        --class-id 0
+        --class-id 0 ^
+        --crop-left 650 --crop-top 51 ^
+        --orig-w 1920 --orig-h 1080
 
 """
 
@@ -73,11 +76,12 @@ class InferencePipeline:
         # 创建目录（存在也不报错）
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 为四个阶段分别创建子目录路径变量（实际创建通常在各阶段开始时）
+        # 为五个阶段分别创建子目录路径变量（实际创建通常在各阶段开始时）
         self.stage1_output = self.output_dir / "stage1_wasb_detection"
         self.stage2_output = self.output_dir / "stage2_fp_filtered"
         self.stage3_output = self.output_dir / "stage3_visualizations"
         self.stage4_output = self.output_dir / "stage4_yolo_labels"
+        self.stage5_output = self.output_dir / "stage5_original_yolo_labels"
 
         # 打印输出目录信息，方便用户查看
         log.info(f"Pipeline 输出目录: {self.output_dir}")
@@ -130,6 +134,11 @@ class InferencePipeline:
             stage4_success = self._run_stage4_yolo_labels()
             if not stage4_success:
                 log.error("Stage 4 失败")
+                return False
+
+            stage5_success = self._run_stage5_original_yolo_labels()
+            if not stage5_success:
+                log.error("Stage 5 失败")
                 return False
 
             # 所有阶段成功完成，打印成功信息
@@ -494,6 +503,91 @@ class InferencePipeline:
         log.info(f"\n✓ Stage 4 完成，成功处理 {success_count}/{len(filtered_csv_files)} 个文件")
         return True
 
+    def _run_stage5_original_yolo_labels(self):
+        """
+        Stage 5: 将过滤后的 CSV 转换为原图尺度 YOLO txt 标签
+
+        依赖 fp_filter/csv_to_original_yolo.py，对 Stage2 输出的每个
+        *_predictions_filtered.csv 分别生成一个 <stem>_orig_yolo_labels/ 子目录，
+        其中每帧对应一个基于原图尺寸归一化的 YOLO 格式 .txt 文件。
+
+        Returns:
+            bool: 是否成功
+        """
+        log.info("\n" + "="*80)
+        log.info("Stage 5: 原图尺度 YOLO 标签生成")
+        log.info("="*80)
+
+        self.stage5_output.mkdir(parents=True, exist_ok=True)
+
+        filtered_csv_files = list(self.stage2_output.glob("*_filtered.csv"))
+        if not filtered_csv_files:
+            log.error("Stage 2 未生成任何过滤后的 CSV 文件，无法生成原图尺度 YOLO 标签")
+            return False
+
+        fp_filter_dir = self.root_dir / "fp_filter"
+        success_count = 0
+
+        for filtered_csv in filtered_csv_files:
+            log.info(f"\n处理: {filtered_csv.name}")
+
+            stem = filtered_csv.stem
+            label_dir = self.stage5_output / f"{stem}_orig_yolo_labels"
+
+            cmd = [
+                sys.executable,
+                "csv_to_original_yolo.py",
+                "--csv", filtered_csv.as_posix(),
+                "--image-root", self.dataset_root.as_posix(),
+                "--output-dir", label_dir.as_posix(),
+                "--crop-left", str(self.args.crop_left),
+                "--crop-top", str(self.args.crop_top),
+                "--orig-w", str(self.args.orig_w),
+                "--orig-h", str(self.args.orig_h),
+                "--box-size", str(self.args.box_size),
+                "--class-id", str(self.args.class_id),
+            ]
+
+            if self.args.orig_no_save_empty:
+                cmd.append("--no-save-empty")
+
+            log.info(f"执行命令: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=str(fp_filter_dir),
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        log.info(f"  {line}")
+
+                if result.stderr and result.stderr.strip():
+                    log.warning("子进程 stderr:\n" + result.stderr.strip())
+
+                txt_files = list(label_dir.glob("*.txt")) if label_dir.exists() else []
+                if txt_files:
+                    log.info(f"✓ 已生成原图尺度 YOLO 标签: {len(txt_files)} 个 txt -> {label_dir.name}")
+                    success_count += 1
+                else:
+                    log.warning(f"未在 {label_dir} 中找到任何 .txt 文件")
+
+            except subprocess.CalledProcessError as e:
+                log.error(f"处理 {filtered_csv.name} 失败: {e}")
+                log.error(f"错误输出: {e.stderr}")
+
+        if success_count == 0:
+            return False
+
+        log.info(f"\n✓ Stage 5 完成，成功处理 {success_count}/{len(filtered_csv_files)} 个文件")
+        return True
+
     def _print_summary(self):
         """打印结果摘要"""
         log.info("\n" + "="*80)
@@ -529,6 +623,14 @@ class InferencePipeline:
         log.info(f"  生成子目录数: {len(label_dirs)}")
         log.info(f"  总 txt 文件数: {total_txts}")
 
+        # Stage 5 结果
+        original_label_dirs = [d for d in self.stage5_output.iterdir() if d.is_dir()] if self.stage5_output.exists() else []
+        total_original_txts = sum(len(list(d.glob("*.txt"))) for d in original_label_dirs)
+        log.info(f"\n🎯 Stage 5 - 原图尺度 YOLO 标签生成:")
+        log.info(f"  位置: {self.stage5_output}")
+        log.info(f"  生成子目录数: {len(original_label_dirs)}")
+        log.info(f"  总 txt 文件数: {total_original_txts}")
+
         log.info(f"\n📁 完整输出目录: {self.output_dir}")
         log.info("="*80)
 
@@ -536,7 +638,7 @@ class InferencePipeline:
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description='完整推理 Pipeline：WASB 检测 -> FP 过滤 -> 可视化',
+        description='完整推理 Pipeline：WASB 检测 -> FP 过滤 -> 可视化 -> YOLO 标签 -> 原图尺度标签',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -605,6 +707,42 @@ def parse_args():
         type=int,
         default=0,
         help='YOLO 标签中的类别 ID，默认 0'
+    )
+
+    # Stage 5 参数
+    parser.add_argument(
+        '--crop-left',
+        type=int,
+        default=650,
+        help='原图尺度标签转换时的裁剪左偏移（像素）'
+    )
+
+    parser.add_argument(
+        '--crop-top',
+        type=int,
+        default=51,
+        help='原图尺度标签转换时的裁剪上偏移（像素）'
+    )
+
+    parser.add_argument(
+        '--orig-w',
+        type=int,
+        default=1920,
+        help='原图宽度（像素）'
+    )
+
+    parser.add_argument(
+        '--orig-h',
+        type=int,
+        default=1080,
+        help='原图高度（像素）'
+    )
+
+    parser.add_argument(
+        '--orig-no-save-empty',
+        action='store_true',
+        default=False,
+        help='Stage 5 不为无检测帧生成空 txt（默认生成）'
     )
 
     return parser.parse_args()

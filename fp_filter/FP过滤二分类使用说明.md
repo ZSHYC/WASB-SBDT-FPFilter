@@ -207,3 +207,98 @@ python fp_filter/csv_to_yolo_txt.py \
 ```
 
 运行后会在 CSV 同目录生成 `<csv_stem>_yolo_labels` 目录，里面每帧对应一个 `.txt`（默认同时会为无检测帧创建空文件，除非使用 `--no-save-empty`）。
+
+---
+
+## 第五步：融合推理（ROI 内 WASB+FP，ROI 外 YOLO）
+
+### 一键 Pipeline 已集成原图尺度标签生成
+
+现在 `run_inference_pipeline.py` 已将 `fp_filter/csv_to_original_yolo.py` 纳入自动流程。
+
+执行：
+
+```powershell
+python run_inference_pipeline.py ^
+  --dataset-root datasets/tennis_predict ^
+  --crop-left 650 --crop-top 51 ^
+  --orig-w 1920 --orig-h 1080
+```
+
+运行完成后会在当前时间戳输出目录下新增：
+
+- `stage5_original_yolo_labels/`
+  - 每个 `*_predictions_filtered.csv` 对应一个子目录
+  - 子目录命名规则：`<csv_stem>_orig_yolo_labels`
+  - 目录中是可直接给 `hybrid_predict.py --wasb-labels-dir` 使用的原图尺度 YOLO 标签
+
+如不希望 Stage 5 为空帧写空 txt，可增加参数：`--orig-no-save-empty`。
+
+### 场景
+
+你当前的目标是对 **1920×1080 原图**做最终推理，但在固定区域内（`left=650, top=51, right=1236, bottom=339`）优先采用 WASB+FP_Filter 的结果，其余区域采用 YOLO。
+
+该方案可避免两个模型在 ROI 内重复检测，同时保留 YOLO 在 ROI 外的覆盖能力。
+
+### 推荐流程（稳定离线融合）
+
+1. 先按既有流程跑出 FP 过滤结果 CSV：
+
+- `*_predictions_filtered.csv`（坐标仍是裁剪图坐标系）
+
+2. 将 FP 结果映射回原图 YOLO 坐标：
+
+- 使用 `fp_filter/csv_to_original_yolo.py`
+- 得到 `--wasb-labels-dir`（每帧一个 txt，原图归一化坐标）
+
+3. 对原图运行融合脚本 `hybrid_predict.py`：
+
+- ROI 内：丢弃 YOLO 框，保留 WASB+FP 框
+- ROI 外：保留 YOLO 框
+- 最终输出统一 YOLO 标签
+
+### 融合脚本
+
+- 脚本位置：`hybrid_predict.py`（项目根目录）
+- 主要参数：
+  - `--input-folder`: 原图目录（1920×1080）
+  - `--output-folder`: 融合结果 txt 输出目录
+  - `--yolo-model`: YOLO 权重
+  - `--wasb-labels-dir`: `csv_to_original_yolo.py` 生成的标签目录
+  - `--left --top --right --bottom`: ROI 四点坐标
+  - `--inside-policy`: ROI 归属规则（`center` 或 `any_overlap`）
+  - `--nms-iou`: 融合后 NMS（0 表示关闭）
+
+### 命令示例
+
+```powershell
+conda activate zsh
+
+python hybrid_predict.py ^
+  --input-folder datasets/tennis_predict/match1/clip1 ^
+  --output-folder hybrid_outputs/match1_clip1_labels ^
+  --yolo-model yolov8n_1280_1113.pt ^
+  --wasb-labels-dir fp_filter/patch_outputs/patches_prediction/match1_clip1_orig_yolo_labels ^
+  --conf 0.5 ^
+  --orig-w 1920 --orig-h 1080 ^
+  --left 650 --top 51 --right 1236 --bottom 339 ^
+  --inside-policy center ^
+  --nms-iou 0.0 ^
+  --max-images 200
+```
+
+其中 `--max-images` 用于快速小样本验证；确认无误后可去掉该参数处理全量数据。
+
+### 可靠性与健壮性设计说明
+
+- **ROI 四点完整使用**：`left/top/right/bottom` 用于完整定义 ROI，而不是只使用偏移量。
+- **越界与参数校验**：运行前校验 `left < right`、`top < bottom`、阈值范围是否合法。
+- **容错读取标签**：WASB txt 某行格式异常时仅跳过该行并告警，不中断全流程。
+- **可选冲突抑制**：可通过 `--nms-iou` 启用融合后按类别 NMS，减少边界重复框。
+- **空帧一致性**：默认写空 txt，便于后续训练/评估流程保持帧对齐。
+
+### 关键建议
+
+- 若你希望“边界附近也强制交给 WASB”，可用 `--inside-policy any_overlap`。
+- 若 ROI 外 YOLO 框与 ROI 内 WASB 框在边界处仍有重合，可设置 `--nms-iou 0.3`（可按效果调优）。
+- 如果最终训练只关心单类别球，确保 YOLO 分支和 WASB 分支类别 ID 定义一致。

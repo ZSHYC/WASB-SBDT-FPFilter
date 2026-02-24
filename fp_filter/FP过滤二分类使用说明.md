@@ -64,8 +64,6 @@ python fp_filter/label_patches.py --manifest fp_filter/patch_outputs/patches_mat
 
 ---
 
-
-
 ## 第二步：训练二分类模型
 
 用标注好的 manifest 训练一个小型 CNN，输入为 patch 图像，输出二类：球(1) / 非球(0)。
@@ -187,3 +185,25 @@ python visualize_filtered.py \
 - 若希望真正显示左右并排对比，可将两张图水平拼接后保存或在播放器中并列展示；`visualize_filtered.py` 可按需改为生成并排图。
 
 ---
+
+## 附加：从推理 CSV 生成 YOLO txt 与可视化查看
+
+为方便把 FP 过滤结果用于下游（如 YOLO 训练或人工快速检查），仓库里新增两个脚本：
+
+- `fp_filter/csv_to_yolo_txt.py`：将推理后的 CSV（已过滤或未过滤）转换为逐帧的 YOLO 格式 `.txt`，一个帧一个 `.txt`。每行格式为 `class x_center y_center w h`（均为归一化到 [0,1] 的值）。脚本特点：
+  - 支持自动从 `--image-root` 或 CSV 路径推断图像尺寸；若找不到图片，会基于 CSV 坐标估算一个后备尺寸（带下限以避免除零）。
+  - 默认固定像素框大小为 15×15，可通过 `--box-size` 调整。
+  - 可选择是否为无检测帧写入空 `.txt`（`--no-save-empty` 禁用）。
+
+示例用法：
+
+```powershell
+conda activate zsh
+python fp_filter/csv_to_yolo_txt.py \
+  --csv fp_filter/patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv \
+  --image-root datasets/tennis_predict \
+  --box-size 15 \
+  --class-id 0
+```
+
+运行后会在 CSV 同目录生成 `<csv_stem>_yolo_labels` 目录，里面每帧对应一个 `.txt`（默认同时会为无检测帧创建空文件，除非使用 `--no-save-empty`）。

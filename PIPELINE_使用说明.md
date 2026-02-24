@@ -2,13 +2,14 @@
 
 ## 概述
 
-`run_inference_pipeline.py` 是一个自动化脚本，将网球检测系统的三个核心步骤串联成一个完整的 Pipeline：
+`run_inference_pipeline.py` 是一个自动化脚本，将网球检测系统的四个核心步骤串联成一个完整的 Pipeline：
 
 1. **Stage 1: WASB 球检测** - 使用 WASB 模型对新数据进行初步检测
 2. **Stage 2: FP 误检过滤** - 使用训练好的二分类模型剔除假阳性检测
 3. **Stage 3: 结果可视化** - 生成包含原始检测和过滤后结果的对比视频
+4. **Stage 4: YOLO 标签生成** - 将过滤后的 CSV 转换为逐帧 YOLO txt 标签文件
 
-通过一行命令即可完成从原始图片到最终检测视频的全流程处理。
+通过一行命令即可完成从原始图片到最终检测视频与 YOLO 标签的全流程处理。
 
 ---
 
@@ -94,6 +95,8 @@ python run_inference_pipeline.py --help
 | `--step`      | `1`   | WASB 检测步长。`1`=逐帧检测（精确但慢），`3`=每3帧检测一次（快速） |
 | `--threshold` | `0.5` | FP 过滤器阈值（0-1）。越高越严格，会过滤掉更多检测点                   |
 | `--fps`       | `25`  | 输出视频帧率                                                           |
+| `--box-size`  | `15`  | Stage 4 YOLO 标签中固定框的像素边长                                    |
+| `--class-id`  | `0`   | Stage 4 YOLO 标签的类别 ID                                             |
 
 ---
 
@@ -143,7 +146,9 @@ python run_inference_pipeline.py ^
     --output-base "pipeline_outputs" ^
     --step 1 ^
     --threshold 0.5 ^
-    --fps 25
+    --fps 25 ^
+    --box-size 15 ^
+    --class-id 0
 ```
 
 ---
@@ -168,8 +173,14 @@ pipeline_outputs/
     ├── stage2_fp_filtered/
     │   └── match1_clip1_predictions_filtered.csv  ← Stage 2: 过滤后的检测结果
     │
-    └── stage3_visualizations/
-        └── match1_clip1_final_result.mp4      ← Stage 3: 最终对比视频
+    ├── stage3_visualizations/
+    │   └── match1_clip1_final_result.mp4      ← Stage 3: 最终对比视频
+    │
+    └── stage4_yolo_labels/
+        └── match1_clip1_predictions_filtered_yolo_labels/
+            ├── 00000001.txt                   ← Stage 4: 每帧对应的 YOLO txt
+            ├── 00000002.txt
+            └── ...
 ```
 
 ### 各阶段输出说明
@@ -198,6 +209,14 @@ pipeline_outputs/
   - 🔴 红色圆圈：原始 WASB 检测结果
   - 🟢 绿色圆圈：FP 过滤后保留的结果
   - 可以直观看到哪些误检被成功过滤掉
+
+#### Stage 4: YOLO 标签
+
+- **逐帧 txt 文件**（存放于 `stage4_yolo_labels/<stem>_yolo_labels/`）
+  - 每帧对应一个 `.txt`，无检测时文件为空
+  - 每行格式：`class x_center y_center width height`（均为 [0,1] 归一化值）
+  - 框大小固定为 `--box-size` 指定的像素值（默认 15×15），可按需调整
+  - 可直接用于 YOLO 系列模型的训练或评估数据集
 
 ---
 
@@ -311,6 +330,18 @@ python visualize_filtered.py ^
     --fps 30
 ```
 
+**重新运行 Stage 4 (YOLO 标签生成)**:
+
+```bash
+cd fp_filter
+python csv_to_yolo_txt.py ^
+    --csv "../pipeline_outputs/2026-02-10_15-30-45/stage2_fp_filtered/match1_clip1_predictions_filtered.csv" ^
+    --image-root "../datasets/tennis_predict" ^
+    --output-dir "../pipeline_outputs/2026-02-10_15-30-45/stage4_yolo_labels/match1_clip1_predictions_filtered_yolo_labels" ^
+    --box-size 15 ^
+    --class-id 0
+```
+
 ### 3. 性能优化建议
 
 | 场景       | 推荐配置     | 说明                            |
@@ -323,7 +354,7 @@ python visualize_filtered.py ^
 
 ## 与手动流程对比
 
-### 手动流程（需要3步）
+### 手动流程（需要4步）
 
 ```bash
 # Step 1: WASB 检测
@@ -346,6 +377,12 @@ python visualize_filtered.py ^
     --filtered-csv "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" ^
     --dataset-root "../src/outputs/main/2026-02-10_17-43-40" ^
     --output-video "patch_outputs/filtered_result.mp4" --fps 25
+
+# Step 4: 生成 YOLO 标签
+python csv_to_yolo_txt.py ^
+    --csv "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" ^
+    --image-root "../datasets/tennis_predict" ^
+    --box-size 15 --class-id 0
 ```
 
 ### Pipeline 流程（一步完成）
@@ -403,11 +440,11 @@ python run_inference_pipeline.py *>&1 | Tee-Object -FilePath pipeline.log
 
 测试环境：Intel i7-10700K, NVIDIA RTX 3080, 16GB RAM
 
-| 数据量  | Step | Stage 1 | Stage 2 | Stage 3 | 总耗时    |
-| ------- | ---- | ------- | ------- | ------- | --------- |
-| 500 帧  | 3    | ~2 分钟 | ~30 秒  | ~1 分钟 | ~3.5 分钟 |
-| 1000 帧 | 3    | ~4 分钟 | ~1 分钟 | ~2 分钟 | ~7 分钟   |
-| 500 帧  | 1    | ~5 分钟 | ~30 秒  | ~1 分钟 | ~6.5 分钟 |
+| 数据量  | Step | Stage 1 | Stage 2 | Stage 3 | Stage 4 | 总耗时    |
+| ------- | ---- | ------- | ------- | ------- | ------- | --------- |
+| 500 帧  | 3    | ~2 分钟 | ~30 秒  | ~1 分钟 | ~5 秒   | ~3.5 分钟 |
+| 1000 帧 | 3    | ~4 分钟 | ~1 分钟 | ~2 分钟 | ~10 秒  | ~7 分钟   |
+| 500 帧  | 1    | ~5 分钟 | ~30 秒  | ~1 分钟 | ~5 秒   | ~6.5 分钟 |
 
 ---
 

@@ -1,10 +1,11 @@
 """
-完整推理 Pipeline：WASB 球检测 -> FP 过滤 -> 结果可视化
+完整推理 Pipeline：WASB 球检测 -> FP 过滤 -> 结果可视化 -> YOLO 标签生成
 
-此脚本自动串联三个步骤：
+此脚本自动串联四个步骤：
 1. 运行 WASB 模型对新数据集进行初步检测（src/main.py）
 2. 使用 FP 过滤器剔除误检（fp_filter/inference.py）
 3. 生成对比可视化视频（fp_filter/visualize_filtered.py）
+4. 将过滤后的 CSV 转换为逐帧 YOLO txt 标签（fp_filter/csv_to_yolo_txt.py）
 
 使用示例：
     python run_inference_pipeline.py
@@ -16,7 +17,9 @@
         --fp-model "fp_filter/patch_outputs/model_resnet/best.pth" ^
         --output-base "pipeline_outputs" ^
         --fps 25 ^
-        --step 3
+        --step 3 ^
+        --box-size 15 ^
+        --class-id 0
 
 """
 
@@ -70,10 +73,11 @@ class InferencePipeline:
         # 创建目录（存在也不报错）
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 为三个阶段分别创建子目录路径变量（实际创建通常在各阶段开始时）
+        # 为四个阶段分别创建子目录路径变量（实际创建通常在各阶段开始时）
         self.stage1_output = self.output_dir / "stage1_wasb_detection"
         self.stage2_output = self.output_dir / "stage2_fp_filtered"
         self.stage3_output = self.output_dir / "stage3_visualizations"
+        self.stage4_output = self.output_dir / "stage4_yolo_labels"
 
         # 打印输出目录信息，方便用户查看
         log.info(f"Pipeline 输出目录: {self.output_dir}")
@@ -121,6 +125,11 @@ class InferencePipeline:
             stage3_success = self._run_stage3_visualization()
             if not stage3_success:
                 log.error("Stage 3 失败")
+                return False
+
+            stage4_success = self._run_stage4_yolo_labels()
+            if not stage4_success:
+                log.error("Stage 4 失败")
                 return False
 
             # 所有阶段成功完成，打印成功信息
@@ -401,7 +410,90 @@ class InferencePipeline:
 
         log.info(f"\n✓ Stage 3 完成，成功生成 {success_count}/{len(filtered_csv_files)} 个视频")
         return True
-    
+
+    def _run_stage4_yolo_labels(self):
+        """
+        Stage 4: 将过滤后的 CSV 转换为逐帧 YOLO txt 标签
+
+        依赖 fp_filter/csv_to_yolo_txt.py，对 Stage2 输出的每个
+        *_predictions_filtered.csv 分别生成一个 <stem>_yolo_labels/ 子目录，
+        其中每帧对应一个 YOLO 格式 .txt 文件。
+
+        Returns:
+            bool: 是否成功
+        """
+        log.info("\n" + "="*80)
+        log.info("Stage 4: YOLO 标签生成")
+        log.info("="*80)
+
+        # 确保 Stage4 根输出目录存在
+        self.stage4_output.mkdir(parents=True, exist_ok=True)
+
+        # 从 Stage2 目录查找所有过滤后的 CSV
+        filtered_csv_files = list(self.stage2_output.glob("*_filtered.csv"))
+        if not filtered_csv_files:
+            log.error("Stage 2 未生成任何过滤后的 CSV 文件，无法生成 YOLO 标签")
+            return False
+
+        fp_filter_dir = self.root_dir / "fp_filter"
+        success_count = 0
+
+        for filtered_csv in filtered_csv_files:
+            log.info(f"\n处理: {filtered_csv.name}")
+
+            # 每个 CSV 生成独立的子目录，例如 stage4_yolo_labels/match1_clip1_predictions_filtered_yolo_labels
+            stem = filtered_csv.stem  # e.g. match1_clip1_predictions_filtered
+            label_dir = self.stage4_output / f"{stem}_yolo_labels"
+
+            cmd = [
+                sys.executable,
+                "csv_to_yolo_txt.py",
+                "--csv", filtered_csv.as_posix(),
+                "--image-root", self.dataset_root.as_posix(),
+                "--output-dir", label_dir.as_posix(),
+                "--box-size", str(self.args.box_size),
+                "--class-id", str(self.args.class_id),
+            ]
+
+            log.info(f"执行命令: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=str(fp_filter_dir),
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+
+                # 将脚本输出的统计信息记录到日志
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        log.info(f"  {line}")
+
+                if result.stderr and result.stderr.strip():
+                    log.warning("子进程 stderr:\n" + result.stderr.strip())
+
+                # 验证输出目录是否已创建且含有 txt 文件
+                txt_files = list(label_dir.glob("*.txt")) if label_dir.exists() else []
+                if txt_files:
+                    log.info(f"✓ 已生成 YOLO 标签: {len(txt_files)} 个 txt -> {label_dir.name}")
+                    success_count += 1
+                else:
+                    log.warning(f"未在 {label_dir} 中找到任何 .txt 文件")
+
+            except subprocess.CalledProcessError as e:
+                log.error(f"处理 {filtered_csv.name} 失败: {e}")
+                log.error(f"错误输出: {e.stderr}")
+
+        if success_count == 0:
+            return False
+
+        log.info(f"\n✓ Stage 4 完成，成功处理 {success_count}/{len(filtered_csv_files)} 个文件")
+        return True
+
     def _print_summary(self):
         """打印结果摘要"""
         log.info("\n" + "="*80)
@@ -429,6 +521,14 @@ class InferencePipeline:
             size_mb = video.stat().st_size / (1024 * 1024)
             log.info(f"  - {video.name} ({size_mb:.1f} MB)")
         
+        # Stage 4 结果
+        label_dirs = [d for d in self.stage4_output.iterdir() if d.is_dir()] if self.stage4_output.exists() else []
+        total_txts = sum(len(list(d.glob("*.txt"))) for d in label_dirs)
+        log.info(f"\n🏷️ Stage 4 - YOLO 标签生成:")
+        log.info(f"  位置: {self.stage4_output}")
+        log.info(f"  生成子目录数: {len(label_dirs)}")
+        log.info(f"  总 txt 文件数: {total_txts}")
+
         log.info(f"\n📁 完整输出目录: {self.output_dir}")
         log.info("="*80)
 
@@ -491,7 +591,22 @@ def parse_args():
         default=25,
         help='输出视频帧率'
     )
-    
+
+    # Stage 4 参数
+    parser.add_argument(
+        '--box-size',
+        type=float,
+        default=15.0,
+        help='YOLO 标签中的固定框大小（像素），默认 15'
+    )
+
+    parser.add_argument(
+        '--class-id',
+        type=int,
+        default=0,
+        help='YOLO 标签中的类别 ID，默认 0'
+    )
+
     return parser.parse_args()
 
 

@@ -11,10 +11,11 @@ echo ========================================================================
 echo                   网球检测完整推理 Pipeline
 echo ========================================================================
 echo.
-echo 即将开始执行三个阶段：
+echo 即将开始执行四个阶段：
 echo   [1] WASB 球检测
 echo   [2] FP 误检过滤
 echo   [3] 结果可视化
+echo   [4] YOLO 标签生成
 echo.
 echo 请确保：
 echo   - 数据已放在 datasets/tennis_predict/ 目录下
@@ -33,7 +34,7 @@ REM 运行 Pipeline（使用默认参数）
 python run_inference_pipeline.py
 
 REM 如果需要自定义参数，可以修改下面的命令
-REM python run_inference_pipeline.py --step 3 --threshold 0.5 --fps 25
+REM python run_inference_pipeline.py --step 3 --threshold 0.5 --fps 25 --box-size 15 --class-id 0
 
 echo.
 echo ========================================================================

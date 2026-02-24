@@ -302,3 +302,14 @@ python hybrid_predict.py ^
 - 若你希望“边界附近也强制交给 WASB”，可用 `--inside-policy any_overlap`。
 - 若 ROI 外 YOLO 框与 ROI 内 WASB 框在边界处仍有重合，可设置 `--nms-iou 0.3`（可按效果调优）。
 - 如果最终训练只关心单类别球，确保 YOLO 分支和 WASB 分支类别 ID 定义一致。
+
+---
+
+### CSV→YOLO 脚本选择与 `hybrid_predict.py` 可视化说明
+
+- **脚本选择**：
+  - 使用 `fp_filter/csv_to_original_yolo.py`（或 `run_inference_pipeline.py` 的 Stage5 输出）时，会把裁剪图坐标加上 `--crop-left` / `--crop-top` 的偏移并归一化到原图尺寸，生成 `*_orig_yolo_labels` 子目录，适用于 WASB+FP 在裁剪图场景下的离线融合流程。
+  - 若仅需把 CSV 中点直接转换为 YOLO txt（无需坐标偏移），可使用 `fp_filter/csv_to_yolo_txt.py`。
+
+- **hybrid_predict.py 的可视化**：`hybrid_predict.py` 默认会生成可视化图片与视频（前提：已安装 `opencv-python`）。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`；输出路径可通过 `--visualize-dir` / `--video-path` 指定，视频参数通过 `--video-fps` / `--video-fourcc` 控制。
+

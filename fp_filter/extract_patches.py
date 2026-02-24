@@ -3,7 +3,7 @@
 并生成 manifest 供后续标注与二分类训练使用。
 
 使用示例（在 fp_filter 下执行）： cd fp_filter(别忘了！) 千万别忘了改文件名！不然就覆盖了！！！
- python extract_patches.py "../src/outputs/main/2026-02-10_16-35-02/match1_clip1_predictions.csv" --dataset-root ../datasets/tennis_predict --output-dir patch_outputs/patches_train10_right --patch-size 128
+ python extract_patches.py "../src/outputs/main/2026-02-24_16-57-24/match1_clip1_predictions.csv" --dataset-root ../datasets/tennis_predict --output-dir patch_outputs/patches_train11_right1 --patch-size 128
 """
 import os
 import os.path as osp

@@ -2,12 +2,13 @@
 
 ## 概述
 
-`run_inference_pipeline.py` 是一个自动化脚本，将网球检测系统的四个核心步骤串联成一个完整的 Pipeline：
+`run_inference_pipeline.py` 是一个自动化脚本，将网球检测系统的五个核心步骤串联成一个完整的 Pipeline：
 
 1. **Stage 1: WASB 球检测** - 使用 WASB 模型对新数据进行初步检测
 2. **Stage 2: FP 误检过滤** - 使用训练好的二分类模型剔除假阳性检测
 3. **Stage 3: 结果可视化** - 生成包含原始检测和过滤后结果的对比视频
 4. **Stage 4: YOLO 标签生成** - 将过滤后的 CSV 转换为逐帧 YOLO txt 标签文件
+5. **Stage 5: 原图尺度 YOLO 标签生成** - （新）将基于裁剪图的 WASB/FP 结果映射回原图并生成逐帧 YOLO txt，供 `hybrid_predict.py` 使用
 
 通过一行命令即可完成从原始图片到最终检测视频与 YOLO 标签的全流程处理。
 
@@ -179,6 +180,12 @@ pipeline_outputs/
     └── stage4_yolo_labels/
         └── match1_clip1_predictions_filtered_yolo_labels/
             ├── 00000001.txt                   ← Stage 4: 每帧对应的 YOLO txt
+            ├── 00000002.txt
+            └── ...
+    
+    └── stage5_original_yolo_labels/               ← Stage 5: 原图尺度 YOLO 标签（新增）
+        └── match1_clip1_predictions_filtered_orig_yolo_labels/
+            ├── 00000001.txt                   ← Stage 5: 每帧对应的原图尺度 YOLO txt
             ├── 00000002.txt
             └── ...
 ```

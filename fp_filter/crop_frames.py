@@ -102,4 +102,4 @@ if __name__ == "__main__":
 
 # python crop_yuedong_frames.py -i right_yuedong_frames -o right_yuedong_up
 
-# python crop_frames.py --input ..\datasets\tennis_predict\match1\clip1 --output ..\datasets\tennis_predict\match1\clip1
+# python crop_frames.py --input ..\clip1_yolo --output ..\datasets\tennis_predict\match1\clip1

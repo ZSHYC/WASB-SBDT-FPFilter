@@ -3,7 +3,7 @@
 极大提高手动标注效率，无需在 Excel 和图片浏览器之间切换。
 
 使用示例（默认在fp_filter目录下执行）：cd fp_filter(别忘了！)
-python label_patches.py --manifest patch_outputs/patches_train11_right1/manifest.csv --size 512
+python label_patches.py --manifest patch_outputs/patches_train14_1/manifest.csv --size 512
 
 从第100张开始标注：
 python label_patches.py --manifest patch_outputs/patches_train10_right/manifest.csv --size 512 --start-from 100

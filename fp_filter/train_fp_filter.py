@@ -13,11 +13,17 @@ python train_fp_filter.py ^
             patch_outputs/patches_train7_right/manifest.csv ^
             patch_outputs/patches_train8_right/manifest.csv ^
             patch_outputs/patches_train9_right/manifest.csv ^
-            patch_outputs/patches_train10_right/manifest.csv ^
-  --out-dir patch_outputs/model_resnet ^
+            patch_outputs/patches_train10_1/manifest.csv ^
+            patch_outputs/patches_train11_1/manifest.csv ^
+            patch_outputs/patches_train12_1/manifest.csv ^
+            patch_outputs/patches_train13_1/manifest.csv ^
+            patch_outputs/patches_train14_1/manifest.csv ^
+  --resume patch_outputs/model_resnet/best.pth ^
+  --out-dir patch_outputs/model_resnet_v2 ^
   --epochs 50
-  
-python train_fp_filter.py --manifest patch_outputs/patches_train1/manifest.csv patch_outputs/patches_train2/manifest.csv patch_outputs/patches_train3/manifest.csv patch_outputs/patches_train4/manifest.csv patch_outputs/patches_train5/manifest.csv patch_outputs/patches_train6_right/manifest.csv patch_outputs/patches_train7_right/manifest.csv patch_outputs/patches_train8_right/manifest.csv patch_outputs/patches_train9_right/manifest.csv patch_outputs/patches_train10_right/manifest.csv --out-dir patch_outputs/model_resnet --epochs 80
+
+python train_fp_filter.py --manifest patch_outputs/patches_train1/manifest.csv patch_outputs/patches_train2/manifest.csv patch_outputs/patches_train3/manifest.csv patch_outputs/patches_train4/manifest.csv patch_outputs/patches_train5/manifest.csv patch_outputs/patches_train6_right/manifest.csv patch_outputs/patches_train7_right/manifest.csv patch_outputs/patches_train8_right/manifest.csv patch_outputs/patches_train9_right/manifest.csv patch_outputs/patches_train10_1/manifest.csv patch_outputs/patches_train11_1/manifest.csv patch_outputs/patches_train12_1/manifest.csv patch_outputs/patches_train13_1/manifest.csv patch_outputs/patches_train14_1/manifest.csv --out-dir patch_outputs/model_resnet_v3 --epochs 80
+
 """
 import os
 import sys
@@ -104,6 +110,7 @@ def main():
     parser = argparse.ArgumentParser(description="训练 FP 过滤二分类模型")
     parser.add_argument("--manifest", "-m", required=True, nargs='+', help="已标注 label 的 manifest.csv 路径（可传多个）")
     parser.add_argument("--out-dir", "-o", default="./outputs/fp_filter", help="保存 checkpoint 与日志的目录")
+    parser.add_argument("--resume", type=str, default="", help="从已有 checkpoint（如 best.pth）加载模型权重后继续训练")
     parser.add_argument("--val-ratio", type=float, default=0.2, help="验证集比例，默认 0.2")
     parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
     parser.add_argument("--batch-size", type=int, default=64, help="批大小")
@@ -171,6 +178,24 @@ def main():
         print(f"Applying Class Weights: Neg(0)={w0:.4f}, Pos(1)={w1:.4f}")
 
     model = build_model().to(device)
+    if args.resume:
+        if not osp.isfile(args.resume):
+            raise FileNotFoundError(f"resume checkpoint 不存在: {args.resume}")
+        ckpt = torch.load(args.resume, map_location=device)
+        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+            state_dict = ckpt["model_state_dict"]
+        elif isinstance(ckpt, dict):
+            state_dict = ckpt
+        else:
+            raise ValueError("resume checkpoint 格式不支持，期望 dict 或包含 model_state_dict 的 checkpoint")
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print(f"已加载 checkpoint: {args.resume}")
+        if missing_keys:
+            print(f"[提示] missing_keys: {len(missing_keys)}")
+        if unexpected_keys:
+            print(f"[提示] unexpected_keys: {len(unexpected_keys)}")
+
     # 将计算出的权重传入 Loss
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)

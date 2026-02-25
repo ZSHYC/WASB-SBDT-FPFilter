@@ -9,7 +9,7 @@
 5. 将过滤后的 CSV 转换为原图尺度 YOLO txt 标签（fp_filter/csv_to_original_yolo.py）
 
 使用示例：
-    python run_inference_pipeline.py
+    python run_inference_pipeline.py --fp-model "fp_filter/patch_outputs/model_resnet_v3/best.pth" 
     
 可选参数：
     python run_inference_pipeline.py ^

@@ -14,7 +14,8 @@ python hybrid_predict.py ^
     --visualize --visualize-video
 
 # 简洁示例（使用 pipeline 输出的原图尺度 WASB 标签目录，并生成可视化）
-python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-24_16-00-58/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels --visualize --visualize-video
+python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs5/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-25_14-25-25/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels --visualize --visualize-video
+
 3. 本脚本对原图跑 YOLO，并过滤 ROI 内检测，再与 --wasb-labels-dir 合并输出。
 
 默认行为：脚本会生成可视化图片与视频（需安装 `opencv-python`）。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`。
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from ultralytics import YOLO
-
+ 
 
 Detection = Dict[str, float]
 

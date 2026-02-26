@@ -14,11 +14,13 @@ python hybrid_predict.py ^
     --visualize --visualize-video
 
 # 简洁示例（使用 pipeline 输出的原图尺度 WASB 标签目录，并生成可视化）
-python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs5/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-25_14-25-25/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels --visualize --visualize-video
+python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs10/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-26_12-13-12/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels --visualize --visualize-video
 
-3. 本脚本对原图跑 YOLO，并过滤 ROI 内检测，再与 --wasb-labels-dir 合并输出。
+3. 本脚本对原图跑 YOLO（全图），并与 --wasb-labels-dir 的 WASB+FP 结果融合：
+    - ROI 内：优先使用 WASB 的检测结果；若某帧 WASB 无检测结果，则在该帧 ROI 内从 YOLO 结果中选取置信度最高的一个作为补位。
+    - ROI 外：使用 YOLO 的检测结果。
 
-默认行为：脚本会生成可视化图片与视频（需安装 `opencv-python`）。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`。
+默认行为：脚本会生成可视化图片与视频。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`。
 
 """
 
@@ -31,7 +33,6 @@ from ultralytics import YOLO
  
 
 Detection = Dict[str, float]
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -465,6 +466,7 @@ def run_hybrid_predict(args):
     total_yolo_all = 0
     total_yolo_kept = 0
     total_yolo_dropped_roi = 0
+    total_yolo_roi_fallback = 0   # WASB 无结果时用 ROI 内 YOLO 最高置信度框补位的帧数
     total_wasb = 0
     total_merged = 0
     missing_wasb_files = 0
@@ -483,22 +485,40 @@ def run_hybrid_predict(args):
         yolo_pixel_dets = yolo_result_to_pixel_dets(result, args.orig_w, args.orig_h, args.conf)
         total_yolo_all += len(yolo_pixel_dets)
 
-        yolo_kept_pixel: List[Detection] = []
+        yolo_inside_roi: List[Detection] = []   # ROI 内的 YOLO 框（像素坐标）
+        yolo_outside_roi: List[Detection] = []  # ROI 外的 YOLO 框（像素坐标）
         for det in yolo_pixel_dets:
             if inside_roi(det, args.left, args.top, args.right, args.bottom, args.inside_policy):
-                total_yolo_dropped_roi += 1
+                yolo_inside_roi.append(det)
             else:
-                yolo_kept_pixel.append(det)
+                yolo_outside_roi.append(det)
                 total_yolo_kept += 1
 
-        yolo_kept_norm = [pixel_to_norm(d, args.orig_w, args.orig_h) for d in yolo_kept_pixel]
+        yolo_outside_norm = [pixel_to_norm(d, args.orig_w, args.orig_h) for d in yolo_outside_roi]
 
         wasb_norm = read_wasb_labels_for_stem(wasb_labels_dir, stem)
         if not (wasb_labels_dir / f"{stem}.txt").exists():
             missing_wasb_files += 1
         total_wasb += len(wasb_norm)
 
-        merged = yolo_kept_norm + wasb_norm
+        # ROI 内融合逻辑：
+        # - WASB 有结果 → 优先使用 WASB，丢弃 ROI 内所有 YOLO 框
+        # - WASB 无结果 → 从 ROI 内 YOLO 框中取置信度最高的一个（若存在）
+        if wasb_norm:
+            roi_result = wasb_norm
+            total_yolo_dropped_roi += len(yolo_inside_roi)
+        else:
+            if yolo_inside_roi:
+                best_inside = max(yolo_inside_roi, key=lambda d: float(d["conf"]))
+                roi_result = [pixel_to_norm(best_inside, args.orig_w, args.orig_h)]
+                total_yolo_roi_fallback += 1
+                # 其余 ROI 内框计为丢弃
+                total_yolo_dropped_roi += len(yolo_inside_roi) - 1
+            else:
+                roi_result = []
+                total_yolo_dropped_roi += 0
+
+        merged = yolo_outside_norm + roi_result
         merged = nms_by_class(merged, args.nms_iou)
         total_merged += len(merged)
 
@@ -516,13 +536,14 @@ def run_hybrid_predict(args):
     print("\n" + "=" * 68)
     print("融合推理完成")
     print("=" * 68)
-    print(f"总帧数                     : {total}")
-    print(f"YOLO 原始框总数            : {total_yolo_all}")
-    print(f"YOLO 保留（ROI 外）框总数  : {total_yolo_kept}")
-    print(f"YOLO 丢弃（ROI 内）框总数  : {total_yolo_dropped_roi}")
-    print(f"WASB+FP 框总数             : {total_wasb}")
-    print(f"融合后框总数               : {total_merged}")
-    print(f"缺失 WASB 标签文件帧数      : {missing_wasb_files}")
+    print(f"总帧数                              : {total}")
+    print(f"YOLO 原始框总数                    : {total_yolo_all}")
+    print(f"YOLO 保留（ROI 外）框总数          : {total_yolo_kept}")
+    print(f"YOLO 丢弃（ROI 内，WASB 有结果）框 : {total_yolo_dropped_roi}")
+    print(f"YOLO 补位（ROI 内，WASB 无结果）帧 : {total_yolo_roi_fallback}")
+    print(f"WASB+FP 框总数                     : {total_wasb}")
+    print(f"融合后框总数                       : {total_merged}")
+    print(f"缺失 WASB 标签文件帧数              : {missing_wasb_files}")
     if vis_stats is not None:
         print(f"可视化写入帧数              : {vis_stats['frames_written']}")
         print(f"可视化绘制框总数            : {vis_stats['boxes_drawn']}")

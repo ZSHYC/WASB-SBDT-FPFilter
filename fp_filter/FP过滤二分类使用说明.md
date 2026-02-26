@@ -238,7 +238,8 @@ python run_inference_pipeline.py ^
 
 你当前的目标是对 **1920×1080 原图**做最终推理，但在固定区域内（`left=650, top=51, right=1236, bottom=339`）优先采用 WASB+FP_Filter 的结果，其余区域采用 YOLO。
 
-该方案可避免两个模型在 ROI 内重复检测，同时保留 YOLO 在 ROI 外的覆盖能力。
+该方案可避免两个模型在 ROI 内重复产生冲突，同时保留 YOLO 在 ROI 外的覆盖能力。
+此外，融合逻辑对 ROI 内的处理为“WASB 优先，YOLO 补位”：如果某帧 WASB/FP 已给出检测，则采用 WASB 结果；若某帧 WASB 无检测而 YOLO 在该帧 ROI 内有检测，则选取该帧 ROI 内 YOLO 置信度最高的检测作为补位。
 
 ### 推荐流程（稳定离线融合）
 
@@ -253,7 +254,7 @@ python run_inference_pipeline.py ^
 
 3. 对原图运行融合脚本 `hybrid_predict.py`：
 
-- ROI 内：丢弃 YOLO 框，保留 WASB+FP 框
+- ROI 内：优先使用 WASB+FP 框；若某帧 WASB 无检测且 YOLO 在该帧 ROI 内有检测，则从该帧 ROI 内的 YOLO 框中选取置信度最高的一个作为补位。
 - ROI 外：保留 YOLO 框
 - 最终输出统一 YOLO 标签
 

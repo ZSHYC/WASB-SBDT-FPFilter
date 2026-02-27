@@ -14,10 +14,11 @@ python hybrid_predict.py ^
     --visualize --visualize-video
 
 # 简洁示例（使用 pipeline 输出的原图尺度 WASB 标签目录，并生成可视化）
-python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs16/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-26_17-50-06/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels 
+python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs22/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-27_15-19-37/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels 
+
 3. 本脚本对原图跑 YOLO（全图），并与 --wasb-labels-dir 的 WASB+FP 结果融合：
-    - ROI 内：优先使用 WASB 的检测结果；若某帧 WASB 无检测结果，则在该帧 ROI 内从 YOLO 结果中选取置信度最高的一个作为补位。
-    - ROI 外：使用 YOLO 的检测结果，同样经过多目标稳定性排斥过滤（过滤固定障碍物）。
+    - ROI 内：优先使用 WASB 的检测结果；若某帧 WASB 无检测结果，则在该帧 ROI 内从 YOLO 结果中选取置信度最高的一个作为补位，经过单目标稳定性排斥过滤（支持回溯删除，从第 1 帧起彻底过滤固定障碍物）。
+    - ROI 外：使用 YOLO 的检测结果，经过多目标稳定性排斥过滤（支持回溯删除，从第 1 帧起彻底过滤固定障碍物）。
 
 默认行为：脚本会生成可视化图片与视频。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`。
 
@@ -71,13 +72,13 @@ def parse_args():
     parser.add_argument(
         "--inside-stability-window",
         type=int,
-        default=8,
+        default=3,
         help="ROI 内稳定性排斥：判定静止障碍物所需连续帧数，默认 8",
     )
     parser.add_argument(
         "--inside-stability-dist",
         type=float,
-        default=15.0,
+        default=50.0,
         help="ROI 内稳定性排斥：'几乎不动'的像素距离阈值，默认 15px",
     )
     parser.add_argument(
@@ -92,13 +93,13 @@ def parse_args():
         "--outside-stability-window",
         type=int,
         default=100,
-        help="ROI 外稳定性排斥：判定静止障碍物所需连续帧数，默认 10；比 ROI 内宽松",
+        help="ROI 外稳定性排斥：判定静止障碍物所需连续帧数（支持回溯删除，确认后从第 1 帧起彻底清除）",
     )
     parser.add_argument(
         "--outside-stability-dist",
         type=float,
         default=500.0,
-        help="ROI 外稳定性排斥：'几乎不动'的像素距离阈值，默认 30px；ROI 外球速更快故阈值更大",
+        help="ROI 外稳定性排斥：'几乎不动'的像素距离阈值；ROI 外球速更快故阈值应比 ROI 内更大",
     )
     parser.add_argument(
         "--outside-stability-max-misses",
@@ -212,22 +213,32 @@ def is_image_file(path: Path) -> bool:
 
 class StabilityFilter:
     """
-    稳定性排斥过滤器（方案B / ROI 内单目标）：检测 YOLO 补位结果是否为固定障碍物。
+    稳定性排斥过滤器（方案B / ROI 内单目标，支持回溯删除）。
 
     工作原理：
-    - 记录 ROI 内 YOLO 补位候选位置（像素坐标）。
-    - 若历史窗口已满，且窗口内所有历史补位点与当前候选的距离均 <= dist，
-      则认为该位置是静止障碍物（位置太稳定，不是运动的球），返回 True（拒绝）。
-    - 若当前候选与所有历史点均距离 > dist（新位置出现），自动清空历史重新计数，
-      防止旧障碍物的记录干扰新出现的真实球的补位。
-    - 无论当前候选被接受还是被稳定性拒绝，都会加入历史（持续强化对该障碍物的判定）。
+    - 记录 ROI 内 YOLO 补位候选位置（像素坐标），按位置聚类分配唯一聚类 ID。
+    - 每次出现全新位置（与所有历史点距离均 > dist）时，清空历史并分配新聚类 ID。
+    - 当历史窗口已满且所有位置距离 <= dist 时，确认该聚类为静止障碍物，
+      将其 ID 加入 confirmed_static_ids。
+    - 第一遍（推理阶段）不过滤，只给 YOLO 补位结果打聚类 ID 标签。
+    - 第二遍（回溯阶段）：删除所有属于 confirmed_static_ids 的 YOLO 补位结果，
+      从第 1 帧起彻底消除固定障碍物的痕迹。
+    - WASB 结果标签为 None，永远不会被回溯删除。
     """
 
     def __init__(self, window: int, dist: float) -> None:
         self.window = window
         self.dist = dist
-        # 只存储像素坐标 (x_px, y_px)
         self.history: deque = deque(maxlen=window)
+        self._next_id: int = 0
+        self._current_cluster_id: int = -1  # -1 表示尚无聚类
+        self.confirmed_static_ids: set = set()
+
+    def _alloc_id(self) -> int:
+        """分配一个全局唯一的聚类 ID。"""
+        tid = self._next_id
+        self._next_id += 1
+        return tid
 
     def _all_close(self, x_px: float, y_px: float) -> bool:
         """历史中所有点与当前候选距离均 <= dist 时返回 True。"""
@@ -238,8 +249,8 @@ class StabilityFilter:
 
     def reset_if_new_position(self, x_px: float, y_px: float) -> None:
         """
-        若当前候选与历史中所有点距离均 > dist（新位置出现），清空历史重新开始。
-        作用：防止旧障碍物记录误杀同区域附近重新出现的真实球。
+        若当前候选与历史中所有点距离均 > dist（新位置出现），清空历史并重置聚类。
+        作用：防止旧障碍物记录干扰新出现的真实球。
         """
         if not self.history:
             return
@@ -249,47 +260,60 @@ class StabilityFilter:
         )
         if all_far:
             self.history.clear()
+            self._current_cluster_id = -1
 
-    def is_static_fp(self, x_px: float, y_px: float) -> bool:
+    def tag_and_update(self, x_px: float, y_px: float) -> int:
         """
-        判断当前候选是否为固定障碍物（静止 FP）。
-        条件：历史窗口已满 且 窗口内所有点与当前候选距离均 <= dist。
+        记录位置并返回当前聚类 ID。调用前应先调用 reset_if_new_position。
+        当聚类满足静止条件时，自动将其 ID 加入 confirmed_static_ids。
         """
-        if len(self.history) < self.window:
-            return False  # 历史不足，暂不排斥
-        return self._all_close(x_px, y_px)
+        if self._current_cluster_id == -1:
+            self._current_cluster_id = self._alloc_id()
 
-    def update(self, x_px: float, y_px: float) -> None:
-        """记录当前补位候选位置（无论接受还是被稳定性拒绝，均记录以强化判定）。"""
         self.history.append((x_px, y_px))
+
+        if len(self.history) >= self.window and self._all_close(x_px, y_px):
+            self.confirmed_static_ids.add(self._current_cluster_id)
+
+        return self._current_cluster_id
 
 
 class MultiObjectStabilityFilter:
     """
-    多目标稳定性排斥过滤器（方案B / ROI 外）：同时追踪多个 YOLO 检测位置，过滤固定障碍物。
+    多目标稳定性排斥过滤器（方案B / ROI 外，支持回溯删除）。
 
     工作原理：
-    - 维护一组轨迹（tracks），每条轨迹记录一个物体的中心像素坐标、连续命中帧数和连续缺失帧数。
+    - 维护一组轨迹（tracks），每条轨迹分配唯一 ID，记录中心像素坐标、连续命中帧数和缺失帧数。
     - 每帧拿到 ROI 外的所有 YOLO 检测框，按距离贪心匹配到已有轨迹：
-        - 匹配成功（距离 <= dist）：更新轨迹位置，命中 +1，缺失清零。
-          若命中 >= window，判定为固定障碍物 → 丢弃该检测框。
-        - 匹配失败（无轨迹在 dist 内）：创建新轨迹（hits=1），保留该检测框。
-    - 每帧结束时，未被匹配到的轨迹缺失 +1；连续缺失 > max_misses 时删除该轨迹。
+        - 匹配成功（距离 <= dist）：更新位置，命中 +1，缺失清零；同时给检测框打上 track_id 标签。
+        - 匹配失败：创建新轨迹（hits=1），给检测框打上新 track_id。
+    - 第一遍（推理阶段）不过滤任何框，只打标签。
+    - 当某条轨迹的 hits >= window 时，将其 ID 加入 confirmed_static_ids。
+    - 第二遍（回溯阶段）：遍历所有缓存的帧结果，一键删除所有属于 confirmed_static_ids
+      的检测框，从第 1 帧起彻底消除固定障碍物的痕迹。
     """
 
     def __init__(self, window: int, dist: float, max_misses: int = 3) -> None:
         self.window = window
         self.dist = dist
         self.max_misses = max_misses
-        # tracks: [{'x': float, 'y': float, 'hits': int, 'misses': int}, ...]
         self.tracks: List[dict] = []
+        self._next_id: int = 0
+        self.confirmed_static_ids: set = set()
 
-    def filter_and_update(self, detections: List[Detection]) -> List[Detection]:
+    def _alloc_id(self) -> int:
+        """分配一个全局唯一的轨迹 ID。"""
+        tid = self._next_id
+        self._next_id += 1
+        return tid
+
+    def tag_and_update(self, detections: List[Detection]) -> List[tuple]:
         """
-        对当前帧的检测框列表执行稳定性过滤并更新轨迹。
-        返回过滤后保留的检测框列表。
+        为每个检测框打上 track_id 标签并更新轨迹状态。
+        不做过滤，返回 [(detection, track_id), ...] 列表。
+        处理完所有帧后，通过 confirmed_static_ids 回溯删除。
         """
-        kept: List[Detection] = []
+        tagged: List[tuple] = []
         matched_track_indices: set = set()
         matched_det_indices: set = set()
 
@@ -317,21 +341,24 @@ class MultiObjectStabilityFilter:
             track["hits"] += 1
             track["misses"] = 0
 
-            if track["hits"] < self.window:
-                kept.append(det)
-            # else: hits >= window → 该位置已确认为静止障碍物，丢弃
+            if track["hits"] >= self.window:
+                self.confirmed_static_ids.add(track["id"])
 
-        # 2. 未匹配的检测框 → 新出现的物体，创建轨迹并保留
+            tagged.append((det, track["id"]))
+
+        # 2. 未匹配的检测框 → 新物体，创建新轨迹
         new_tracks: List[dict] = []
         for di, det in enumerate(detections):
             if di not in matched_det_indices:
+                tid = self._alloc_id()
                 new_tracks.append({
+                    "id": tid,
                     "x": float(det["x"]),
                     "y": float(det["y"]),
                     "hits": 1,
                     "misses": 0,
                 })
-                kept.append(det)
+                tagged.append((det, tid))
 
         # 3. 清理未匹配的现有轨迹（缺失 +1，超时则删除）
         surviving: List[dict] = []
@@ -344,7 +371,7 @@ class MultiObjectStabilityFilter:
         surviving.extend(new_tracks)
         self.tracks = surviving
 
-        return kept
+        return tagged
 
 
 def denorm_xywh_to_xyxy(x: float, y: float, w: float, h: float) -> Tuple[float, float, float, float]:
@@ -656,28 +683,28 @@ def run_hybrid_predict(args):
     if args.max_images > 0:
         images = images[: args.max_images]
 
-    # 初始化 ROI 内稳定性排斥过滤器（单目标）
+    # 初始化 ROI 内稳定性排斥过滤器（单目标，支持回溯删除）
     stab_filter = StabilityFilter(
         window=args.inside_stability_window,
         dist=args.inside_stability_dist,
     )
-    # 初始化 ROI 外稳定性排斥过滤器（多目标）
+    # 初始化 ROI 外稳定性排斥过滤器（多目标，支持回溯删除）
     out_stab_filter = MultiObjectStabilityFilter(
         window=args.outside_stability_window,
         dist=args.outside_stability_dist,
         max_misses=args.outside_stability_max_misses,
     )
 
+    # ===================== Phase 1: 推理 + 打标签（缓存所有帧结果） =====================
     total = 0
     total_yolo_all = 0
-    total_yolo_kept = 0                 # ROI 外过滤后保留的框总数
     total_yolo_dropped_roi = 0
-    total_yolo_roi_fallback = 0         # WASB 无结果时 YOLO 补位成功的帧数
-    total_stability_rejected = 0        # 方案B：ROI 内稳定性排斥拒绝的帧数
-    total_outside_stability_rejected = 0  # 方案B：ROI 外稳定性排斥拒绝的框数
+    total_yolo_roi_fallback = 0         # WASB 无结果时 YOLO 补位尝试的帧数
     total_wasb = 0
-    total_merged = 0
     missing_wasb_files = 0
+
+    # 缓存: [(stem, tagged_outside_norm, roi_result), ...]
+    all_frame_results: list = []
 
     for img_path in images:
         total += 1
@@ -688,92 +715,125 @@ def run_hybrid_predict(args):
             result = results[0]
         except Exception as e:
             print(f"[错误] YOLO 推理失败: {img_path.name} ({e})")
+            all_frame_results.append((stem, [], []))
             continue
 
         yolo_pixel_dets = yolo_result_to_pixel_dets(result, args.orig_w, args.orig_h, args.conf)
         total_yolo_all += len(yolo_pixel_dets)
 
-        yolo_inside_roi: List[Detection] = []   # ROI 内的 YOLO 框（像素坐标）
-        yolo_outside_roi: List[Detection] = []  # ROI 外的 YOLO 框（像素坐标）
+        yolo_inside_roi: List[Detection] = []
+        yolo_outside_roi: List[Detection] = []
         for det in yolo_pixel_dets:
             if inside_roi(det, args.left, args.top, args.right, args.bottom, args.inside_policy):
                 yolo_inside_roi.append(det)
             else:
                 yolo_outside_roi.append(det)
 
-        # ROI 外稳定性排斥过滤（多目标）
+        # ROI 外：打标签（不过滤），用于后续回溯删除
         if args.outside_stability_filter:
-            before_out = len(yolo_outside_roi)
-            yolo_outside_roi = out_stab_filter.filter_and_update(yolo_outside_roi)
-            total_outside_stability_rejected += before_out - len(yolo_outside_roi)
+            tagged_outside = out_stab_filter.tag_and_update(yolo_outside_roi)
+        else:
+            tagged_outside = [(det, None) for det in yolo_outside_roi]
 
-        total_yolo_kept += len(yolo_outside_roi)
+        tagged_outside_norm = [
+            (pixel_to_norm(det, args.orig_w, args.orig_h), tid)
+            for det, tid in tagged_outside
+        ]
 
-        yolo_outside_norm = [pixel_to_norm(d, args.orig_w, args.orig_h) for d in yolo_outside_roi]
-
+        # WASB 标签
         wasb_norm = read_wasb_labels_for_stem(wasb_labels_dir, stem)
         if not (wasb_labels_dir / f"{stem}.txt").exists():
             missing_wasb_files += 1
         total_wasb += len(wasb_norm)
 
-        # ROI 内融合逻辑：
-        # - WASB 有结果 → 优先使用 WASB，丢弃 ROI 内所有 YOLO 框
-        # - WASB 无结果 → 从 ROI 内 YOLO 框中取置信度最高的一个，经过方案B（稳定性排斥）过滤
+        # ROI 内融合逻辑（打标签，Phase 2 回溯删除）
         if wasb_norm:
-            roi_result = wasb_norm
+            roi_result_tagged = [(det, None) for det in wasb_norm]  # WASB → 无聚类标签，永远保留
             total_yolo_dropped_roi += len(yolo_inside_roi)
-            # WASB 有结果时不更新 stab_filter（WASB 检测到球不等于该位置是静止障碍物）
         else:
             if yolo_inside_roi:
                 best_inside = max(yolo_inside_roi, key=lambda d: float(d["conf"]))
                 cx_px = best_inside["x"]
                 cy_px = best_inside["y"]
 
-                # 稳定性排斥检查（方案B）
-                # 先检测是否是全新位置（若是则重置历史，防止旧障碍物干扰）
                 stab_filter.reset_if_new_position(cx_px, cy_px)
 
-                if args.inside_stability_filter and stab_filter.is_static_fp(cx_px, cy_px):
-                    # 位置过于稳定 → 固定障碍物，丢弃
-                    roi_result = []
-                    total_stability_rejected += 1
+                if args.inside_stability_filter:
+                    cluster_id = stab_filter.tag_and_update(cx_px, cy_px)
                 else:
-                    roi_result = [pixel_to_norm(best_inside, args.orig_w, args.orig_h)]
-                    total_yolo_roi_fallback += 1
+                    cluster_id = None  # 过滤关闭时不打标签，Phase 2 始终保留
 
-                # 无论接受还是被稳定性拒绝，均记录进补位历史（持续强化障碍物判定）
-                stab_filter.update(cx_px, cy_px)
-
-                # 其余 ROI 内框（不含 best_inside）计为丢弃
+                roi_result_tagged = [(pixel_to_norm(best_inside, args.orig_w, args.orig_h), cluster_id)]
+                total_yolo_roi_fallback += 1
                 total_yolo_dropped_roi += len(yolo_inside_roi) - 1
             else:
-                roi_result = []
+                roi_result_tagged = []
 
-        merged = yolo_outside_norm + roi_result
+        all_frame_results.append((stem, tagged_outside_norm, roi_result_tagged))
+
+        if total % 200 == 0:
+            print(f"推理阶段：已处理 {total}/{len(images)} 帧...")
+
+    # ===================== Phase 2: 回溯删除 + 批量写入 =====================
+    outside_static_ids = out_stab_filter.confirmed_static_ids
+    inside_static_ids = stab_filter.confirmed_static_ids
+
+    if outside_static_ids or inside_static_ids:
+        print(f"\n回溯删除：")
+        if outside_static_ids:
+            print(f"  ROI 外：发现 {len(outside_static_ids)} 个确认的静止障碍物轨迹")
+        if inside_static_ids:
+            print(f"  ROI 内：发现 {len(inside_static_ids)} 个确认的静止障碍物聚类")
+        print("  正在清除其在所有帧中的检测框...")
+    else:
+        print(f"\n回溯删除：未发现需要清除的静止障碍物")
+
+    total_yolo_kept = 0
+    total_outside_stability_rejected = 0
+    total_inside_stability_rejected = 0
+    total_merged = 0
+
+    for stem, tagged_outside_norm, roi_result_tagged in all_frame_results:
+        # ROI 外：移除已确认静止轨迹（从第 1 帧起彻底清除）
+        cleaned_outside = [
+            det for det, tid in tagged_outside_norm
+            if tid is None or tid not in outside_static_ids
+        ]
+        total_outside_stability_rejected += len(tagged_outside_norm) - len(cleaned_outside)
+        total_yolo_kept += len(cleaned_outside)
+
+        # ROI 内：移除已确认静止聚类（WASB 结果 cid=None 始终保留）
+        cleaned_roi = [
+            det for det, cid in roi_result_tagged
+            if cid is None or cid not in inside_static_ids
+        ]
+        total_inside_stability_rejected += len(roi_result_tagged) - len(cleaned_roi)
+
+        merged = cleaned_outside + cleaned_roi
         merged = nms_by_class(merged, args.nms_iou)
         total_merged += len(merged)
 
         out_path = output_folder / f"{stem}.txt"
         write_yolo_file(out_path, merged, save_empty=not args.no_save_empty)
 
-        if total % 200 == 0:
-            print(f"已处理 {total}/{len(images)} 帧...")
-
+    # ===================== Phase 3: 可视化 =====================
     vis_stats = None
     if args.visualize or args.visualize_video:
         print("\n开始执行融合结果可视化...")
         vis_stats = run_visualization_from_labels(images=images, labels_dir=output_folder, args=args)
 
     print("\n" + "=" * 68)
-    print("融合推理完成")
+    print("融合推理完成（含回溯删除）")
     print("=" * 68)
     print(f"总帧数                              : {total}")
     print(f"YOLO 原始框总数                    : {total_yolo_all}")
-    print(f"YOLO 保留（ROI 外，过滤后）框总数   : {total_yolo_kept}")
-    print(f"ROI外 稳定性排斥（静止障碍物）框数   : {total_outside_stability_rejected}")
+    print(f"YOLO 保留（ROI 外，回溯后）框总数   : {total_yolo_kept}")
+    print(f"ROI外 稳定性排斥（回溯删除）框数     : {total_outside_stability_rejected}")
+    print(f"  其中确认的静止轨迹数              : {len(outside_static_ids)}")
     print(f"YOLO 丢弃（ROI 内，WASB 有结果）框 : {total_yolo_dropped_roi}")
-    print(f"YOLO 补位（ROI 内，WASB 无结果）帧 : {total_yolo_roi_fallback}")
-    print(f"ROI内 稳定性排斥（静止障碍物）帧数   : {total_stability_rejected}")
+    print(f"YOLO 补位尝试（ROI 内）帧           : {total_yolo_roi_fallback}")
+    print(f"ROI内 稳定性排斥（回溯删除）帧数     : {total_inside_stability_rejected}")
+    print(f"  其中确认的静止聚类数              : {len(inside_static_ids)}")
     print(f"WASB+FP 框总数                     : {total_wasb}")
     print(f"融合后框总数                       : {total_merged}")
     print(f"缺失 WASB 标签文件帧数              : {missing_wasb_files}")

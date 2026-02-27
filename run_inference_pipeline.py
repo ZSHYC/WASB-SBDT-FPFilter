@@ -10,6 +10,7 @@
 
 使用示例：
     python run_inference_pipeline.py --fp-model "fp_filter/patch_outputs/model_resnet_v3/best.pth" 
+    python run_inference_pipeline.py --fp-model "fp_filter/patch_outputs/model_resnet/best.pth" 
     
 可选参数：
     python run_inference_pipeline.py ^

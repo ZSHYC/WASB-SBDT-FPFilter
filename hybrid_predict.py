@@ -14,11 +14,10 @@ python hybrid_predict.py ^
     --visualize --visualize-video
 
 # 简洁示例（使用 pipeline 输出的原图尺度 WASB 标签目录，并生成可视化）
-python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs14/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-26_17-50-06/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels --visualize --visualize-video --stability-window 8 --stability-dist 15
-
+python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs16/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-26_17-50-06/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels 
 3. 本脚本对原图跑 YOLO（全图），并与 --wasb-labels-dir 的 WASB+FP 结果融合：
     - ROI 内：优先使用 WASB 的检测结果；若某帧 WASB 无检测结果，则在该帧 ROI 内从 YOLO 结果中选取置信度最高的一个作为补位。
-    - ROI 外：使用 YOLO 的检测结果。
+    - ROI 外：使用 YOLO 的检测结果，同样经过多目标稳定性排斥过滤（过滤固定障碍物）。
 
 默认行为：脚本会生成可视化图片与视频。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`。
 
@@ -68,25 +67,51 @@ def parse_args():
         default=0.0,
         help="融合后按类别执行 NMS 的 IoU 阈值；<=0 表示关闭 NMS",
     )
-    # ---- 稳定性排斥参数（方案B）----
+    # ---- ROI 内稳定性排斥参数（单目标，针对 WASB 补位候选）----
     parser.add_argument(
-        "--stability-window",
+        "--inside-stability-window",
         type=int,
         default=8,
-        help="稳定性排斥：判定静止障碍物所需的连续帧数，默认 8；窗口内所有补位点均在 stability-dist 范围内才触发排斥",
+        help="ROI 内稳定性排斥：判定静止障碍物所需连续帧数，默认 8",
     )
     parser.add_argument(
-        "--stability-dist",
+        "--inside-stability-dist",
         type=float,
         default=15.0,
-        help="稳定性排斥：判定'几乎不动'的像素距离阈值，默认 15px；补位历史中所有点与当前候选距离均 <= 此值则视为固定障碍物",
+        help="ROI 内稳定性排斥：'几乎不动'的像素距离阈值，默认 15px",
     )
     parser.add_argument(
-        "--no-stability-filter",
-        dest="stability_filter",
+        "--no-inside-stability-filter",
+        dest="inside_stability_filter",
         action="store_false",
         default=True,
-        help="关闭稳定性排斥过滤（默认开启）",
+        help="关闭 ROI 内稳定性排斥过滤（默认开启）",
+    )
+    # ---- ROI 外稳定性排斥参数（多目标，针对 ROI 外 YOLO 框）----
+    parser.add_argument(
+        "--outside-stability-window",
+        type=int,
+        default=100,
+        help="ROI 外稳定性排斥：判定静止障碍物所需连续帧数，默认 10；比 ROI 内宽松",
+    )
+    parser.add_argument(
+        "--outside-stability-dist",
+        type=float,
+        default=500.0,
+        help="ROI 外稳定性排斥：'几乎不动'的像素距离阈值，默认 30px；ROI 外球速更快故阈值更大",
+    )
+    parser.add_argument(
+        "--outside-stability-max-misses",
+        type=int,
+        default=3,
+        help="ROI 外稳定性排斥：轨迹连续未匹配帧数上限，超过则删除该轨迹，默认 3",
+    )
+    parser.add_argument(
+        "--no-outside-stability-filter",
+        dest="outside_stability_filter",
+        action="store_false",
+        default=True,
+        help="关闭 ROI 外稳定性排斥过滤（默认开启）",
     )
     parser.add_argument(
         "--no-save-empty",
@@ -151,25 +176,6 @@ def parse_args():
         default="mp4v",
         help="可视化视频编码 fourcc（4 个字符，如 mp4v/XVID）",
     )
-    # ---- 时序一致性过滤参数（方案三）----
-    parser.add_argument(
-        "--temporal-window",
-        type=int,
-        default=5,
-        help="时序过滤：保留的历史帧数（滑动窗口大小），默认 5",
-    )
-    parser.add_argument(
-        "--temporal-max-dist",
-        type=float,
-        default=150.0,
-        help="时序过滤：补位框中心距预测位置的最大允许像素距离，默认 150px；超出则视为 FP 丢弃",
-    )
-    parser.add_argument(
-        "--temporal-min-history",
-        type=int,
-        default=2,
-        help="时序过滤：启用过滤至少需要的历史帧数，默认 2；历史不足时跳过过滤",
-    )
     return parser.parse_args()
 
 
@@ -188,10 +194,16 @@ def validate_args(args):
         raise ValueError("video-fps 必须 > 0")
     if len(args.video_fourcc) != 4:
         raise ValueError("video-fourcc 必须是 4 个字符")
-    if args.stability_window < 1:
-        raise ValueError("stability-window 必须 >= 1")
-    if args.stability_dist <= 0:
-        raise ValueError("stability-dist 必须 > 0")
+    if args.inside_stability_window < 1:
+        raise ValueError("inside-stability-window 必须 >= 1")
+    if args.inside_stability_dist <= 0:
+        raise ValueError("inside-stability-dist 必须 > 0")
+    if args.outside_stability_window < 1:
+        raise ValueError("outside-stability-window 必须 >= 1")
+    if args.outside_stability_dist <= 0:
+        raise ValueError("outside-stability-dist 必须 > 0")
+    if args.outside_stability_max_misses < 0:
+        raise ValueError("outside-stability-max-misses 必须 >= 0")
 
 
 def is_image_file(path: Path) -> bool:
@@ -200,10 +212,10 @@ def is_image_file(path: Path) -> bool:
 
 class StabilityFilter:
     """
-    稳定性排斥过滤器（方案B）：检测 YOLO 补位结果是否为固定障碍物。
+    稳定性排斥过滤器（方案B / ROI 内单目标）：检测 YOLO 补位结果是否为固定障碍物。
 
     工作原理：
-    - 只记录通过时序检查（方案三）的 YOLO 补位候选位置（像素坐标）。
+    - 记录 ROI 内 YOLO 补位候选位置（像素坐标）。
     - 若历史窗口已满，且窗口内所有历史补位点与当前候选的距离均 <= dist，
       则认为该位置是静止障碍物（位置太稳定，不是运动的球），返回 True（拒绝）。
     - 若当前候选与所有历史点均距离 > dist（新位置出现），自动清空历史重新计数，
@@ -250,6 +262,89 @@ class StabilityFilter:
     def update(self, x_px: float, y_px: float) -> None:
         """记录当前补位候选位置（无论接受还是被稳定性拒绝，均记录以强化判定）。"""
         self.history.append((x_px, y_px))
+
+
+class MultiObjectStabilityFilter:
+    """
+    多目标稳定性排斥过滤器（方案B / ROI 外）：同时追踪多个 YOLO 检测位置，过滤固定障碍物。
+
+    工作原理：
+    - 维护一组轨迹（tracks），每条轨迹记录一个物体的中心像素坐标、连续命中帧数和连续缺失帧数。
+    - 每帧拿到 ROI 外的所有 YOLO 检测框，按距离贪心匹配到已有轨迹：
+        - 匹配成功（距离 <= dist）：更新轨迹位置，命中 +1，缺失清零。
+          若命中 >= window，判定为固定障碍物 → 丢弃该检测框。
+        - 匹配失败（无轨迹在 dist 内）：创建新轨迹（hits=1），保留该检测框。
+    - 每帧结束时，未被匹配到的轨迹缺失 +1；连续缺失 > max_misses 时删除该轨迹。
+    """
+
+    def __init__(self, window: int, dist: float, max_misses: int = 3) -> None:
+        self.window = window
+        self.dist = dist
+        self.max_misses = max_misses
+        # tracks: [{'x': float, 'y': float, 'hits': int, 'misses': int}, ...]
+        self.tracks: List[dict] = []
+
+    def filter_and_update(self, detections: List[Detection]) -> List[Detection]:
+        """
+        对当前帧的检测框列表执行稳定性过滤并更新轨迹。
+        返回过滤后保留的检测框列表。
+        """
+        kept: List[Detection] = []
+        matched_track_indices: set = set()
+        matched_det_indices: set = set()
+
+        # 1. 构建 (distance, det_idx, track_idx) 列表，按距离排序后贪心匹配
+        candidates = []
+        for di, det in enumerate(detections):
+            cx, cy = float(det["x"]), float(det["y"])
+            for ti, track in enumerate(self.tracks):
+                d = math.sqrt((cx - track["x"]) ** 2 + (cy - track["y"]) ** 2)
+                if d <= self.dist:
+                    candidates.append((d, di, ti))
+
+        candidates.sort(key=lambda t: t[0])
+
+        for _, di, ti in candidates:
+            if di in matched_det_indices or ti in matched_track_indices:
+                continue
+            matched_det_indices.add(di)
+            matched_track_indices.add(ti)
+
+            det = detections[di]
+            track = self.tracks[ti]
+            track["x"] = float(det["x"])
+            track["y"] = float(det["y"])
+            track["hits"] += 1
+            track["misses"] = 0
+
+            if track["hits"] < self.window:
+                kept.append(det)
+            # else: hits >= window → 该位置已确认为静止障碍物，丢弃
+
+        # 2. 未匹配的检测框 → 新出现的物体，创建轨迹并保留
+        new_tracks: List[dict] = []
+        for di, det in enumerate(detections):
+            if di not in matched_det_indices:
+                new_tracks.append({
+                    "x": float(det["x"]),
+                    "y": float(det["y"]),
+                    "hits": 1,
+                    "misses": 0,
+                })
+                kept.append(det)
+
+        # 3. 清理未匹配的现有轨迹（缺失 +1，超时则删除）
+        surviving: List[dict] = []
+        for ti, track in enumerate(self.tracks):
+            if ti not in matched_track_indices:
+                track["misses"] += 1
+            if track["misses"] <= self.max_misses:
+                surviving.append(track)
+
+        surviving.extend(new_tracks)
+        self.tracks = surviving
+
+        return kept
 
 
 def denorm_xywh_to_xyxy(x: float, y: float, w: float, h: float) -> Tuple[float, float, float, float]:
@@ -561,18 +656,25 @@ def run_hybrid_predict(args):
     if args.max_images > 0:
         images = images[: args.max_images]
 
-    # 初始化稳定性排斥过滤器（方案B）
+    # 初始化 ROI 内稳定性排斥过滤器（单目标）
     stab_filter = StabilityFilter(
-        window=args.stability_window,
-        dist=args.stability_dist,
+        window=args.inside_stability_window,
+        dist=args.inside_stability_dist,
+    )
+    # 初始化 ROI 外稳定性排斥过滤器（多目标）
+    out_stab_filter = MultiObjectStabilityFilter(
+        window=args.outside_stability_window,
+        dist=args.outside_stability_dist,
+        max_misses=args.outside_stability_max_misses,
     )
 
     total = 0
     total_yolo_all = 0
-    total_yolo_kept = 0
+    total_yolo_kept = 0                 # ROI 外过滤后保留的框总数
     total_yolo_dropped_roi = 0
-    total_yolo_roi_fallback = 0      # WASB 无结果时 YOLO 补位成功的帧数
-    total_stability_rejected = 0    # 方案B：稳定性排斥拒绝的帧数
+    total_yolo_roi_fallback = 0         # WASB 无结果时 YOLO 补位成功的帧数
+    total_stability_rejected = 0        # 方案B：ROI 内稳定性排斥拒绝的帧数
+    total_outside_stability_rejected = 0  # 方案B：ROI 外稳定性排斥拒绝的框数
     total_wasb = 0
     total_merged = 0
     missing_wasb_files = 0
@@ -598,7 +700,14 @@ def run_hybrid_predict(args):
                 yolo_inside_roi.append(det)
             else:
                 yolo_outside_roi.append(det)
-                total_yolo_kept += 1
+
+        # ROI 外稳定性排斥过滤（多目标）
+        if args.outside_stability_filter:
+            before_out = len(yolo_outside_roi)
+            yolo_outside_roi = out_stab_filter.filter_and_update(yolo_outside_roi)
+            total_outside_stability_rejected += before_out - len(yolo_outside_roi)
+
+        total_yolo_kept += len(yolo_outside_roi)
 
         yolo_outside_norm = [pixel_to_norm(d, args.orig_w, args.orig_h) for d in yolo_outside_roi]
 
@@ -624,7 +733,7 @@ def run_hybrid_predict(args):
                 # 先检测是否是全新位置（若是则重置历史，防止旧障碍物干扰）
                 stab_filter.reset_if_new_position(cx_px, cy_px)
 
-                if args.stability_filter and stab_filter.is_static_fp(cx_px, cy_px):
+                if args.inside_stability_filter and stab_filter.is_static_fp(cx_px, cy_px):
                     # 位置过于稳定 → 固定障碍物，丢弃
                     roi_result = []
                     total_stability_rejected += 1
@@ -660,10 +769,11 @@ def run_hybrid_predict(args):
     print("=" * 68)
     print(f"总帧数                              : {total}")
     print(f"YOLO 原始框总数                    : {total_yolo_all}")
-    print(f"YOLO 保留（ROI 外）框总数          : {total_yolo_kept}")
+    print(f"YOLO 保留（ROI 外，过滤后）框总数   : {total_yolo_kept}")
+    print(f"ROI外 稳定性排斥（静止障碍物）框数   : {total_outside_stability_rejected}")
     print(f"YOLO 丢弃（ROI 内，WASB 有结果）框 : {total_yolo_dropped_roi}")
     print(f"YOLO 补位（ROI 内，WASB 无结果）帧 : {total_yolo_roi_fallback}")
-    print(f"稳定性排斥（方案B，静止障碍物）帧数   : {total_stability_rejected}")
+    print(f"ROI内 稳定性排斥（静止障碍物）帧数   : {total_stability_rejected}")
     print(f"WASB+FP 框总数                     : {total_wasb}")
     print(f"融合后框总数                       : {total_merged}")
     print(f"缺失 WASB 标签文件帧数              : {missing_wasb_files}")

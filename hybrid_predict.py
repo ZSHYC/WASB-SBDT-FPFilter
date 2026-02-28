@@ -16,6 +16,8 @@ python hybrid_predict.py ^
 # 简洁示例（使用 pipeline 输出的原图尺度 WASB 标签目录，并生成可视化）
 python hybrid_predict.py --input-folder clip1_yolo --output-folder hybrid_outputs/hybrid_outputs22/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir pipeline_outputs/2026-02-27_15-19-37/stage5_original_yolo_labels/match1_clip1_predictions_filtered_orig_yolo_labels 
 
+python hybrid_predict.py --input-folder left_frames --output-folder hybrid_outputs/hybrid_outputs_left1/match1_clip1_labels --yolo-model yolov8n_1280_1113.pt --wasb-labels-dir left_orig_yolo_labels_wasb
+
 3. 本脚本对原图跑 YOLO（全图），并与 --wasb-labels-dir 的 WASB+FP 结果融合：
     - ROI 内：优先使用 WASB 的检测结果；若某帧 WASB 无检测结果，则在该帧 ROI 内从 YOLO 结果中选取置信度最高的一个作为补位，经过单目标稳定性排斥过滤（支持回溯删除，从第 1 帧起彻底过滤固定障碍物）。
     - ROI 外：使用 YOLO 的检测结果，经过多目标稳定性排斥过滤（支持回溯删除，从第 1 帧起彻底过滤固定障碍物）。

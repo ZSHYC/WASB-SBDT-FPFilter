@@ -18,3 +18,12 @@ hybrid_outputs2/
 hybrid_outputs3/
 hybrid_outputs4/
 hybrid_outputs5/
+left_frames/
+left_labels_pred/
+left_orig_yolo_labels_wasb/
+*.mp4
+left_up/
+left_up_labels_pred/
+left_yolo/
+left_up_vis_pred/
+*.jpg

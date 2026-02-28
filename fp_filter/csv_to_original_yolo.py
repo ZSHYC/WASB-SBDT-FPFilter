@@ -26,13 +26,17 @@ python fp_filter/csv_to_original_yolo.py ^
     --output-dir fp_filter/patch_outputs/patches_prediction/match1_clip1_orig_yolo_labels
 
 # 自定义裁剪偏移和原图尺寸
-python fp_filter/csv_to_original_yolo.py ^
-    --csv fp_filter/patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv ^
+python csv_to_original_yolo.py ^
+    --csv ..\src\outputs\main\2026-02-27_16-46-15\match1_clip1_predictions.csv ^
     --image-root datasets/tennis_predict ^
-    --output-dir fp_filter/patch_outputs/patches_prediction/match1_clip1_orig_yolo_labels ^
-    --crop-left 650 --crop-top 51 ^
-    --orig-w 1920 --orig-h 1080 ^
-    --box-size 15 --class-id 0
+    --output-dir ../left_orig_yolo_labels_wasb ^
+    --crop-left 410 --crop-top 44 ^
+    --orig-w 1280 --orig-h 720 ^
+    --box-size 12 --class-id 0
+
+python csv_to_original_yolo.py --csv ..\src\outputs\main\2026-02-27_16-46-15\match1_clip1_predictions.csv --image-root datasets/tennis_predict --output-dir ../left_orig_yolo_labels_wasb --crop-left 410 --crop-top 44 --orig-w 1280 --orig-h 720 --box-size 12 --class-id 0
+
+
 
 # 不生成空帧 txt
 python fp_filter/csv_to_original_yolo.py ^

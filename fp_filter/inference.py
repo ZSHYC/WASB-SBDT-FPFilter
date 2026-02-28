@@ -15,7 +15,7 @@ python inference.py ^
     --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" ^
     --threshold 0.5
     
-python inference.py --csv "../src/outputs/main/2026-02-10_17-43-40/match1_clip1_predictions.csv" --dataset-root "../datasets/tennis_predict" --model "patch_outputs/model_resnet/best.pth" --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" --threshold 0.5
+python inference.py --csv "../src/outputs/main/2026-02-27_16-46-15/match1_clip1_predictions.csv" --dataset-root "../datasets/tennis_predict" --model "patch_outputs/model_resnet/best.pth" --output "patch_outputs/patches_prediction/match1_clip1_predictions_filtered.csv" --threshold 0.5
 """
 
 import os

@@ -2,7 +2,7 @@
 
 ## 一、概述
 
-`hybrid_predict.py` 是 WASB-SBDT-FPFilter 项目的**融合推理脚本**，用于将两种检测模型（WASB 热力图检测 + YOLOv8 目标检测）的结果进行智能融合，输出最终的网球检测标注文件（YOLO 格式 `.txt`）和可视化的图片和视频。
+`hybrid_predict.py` 是 WASB-SBDT-FPFilter 项目的**融合推理脚本**，用于将两种检测模型（WASB_FP_filter + YOLOv8 ）的结果进行智能融合，输出最终的网球检测标注文件（YOLO 格式 `.txt`）和可视化的图片和视频。
 
 ### 核心思路
 

@@ -66,7 +66,7 @@ python fp_filter/label_patches.py --manifest fp_filter/patch_outputs/patches_mat
 
 ## 第二步：训练二分类模型
 
-用标注好的 manifest 训练一个小型 CNN，输入为 patch 图像，输出二类：球(1) / 非球(0)。
+用标注好的 manifest 训练一个ResNet-18，输入为 patch 图像，输出二类：球(1) / 非球(0)。
 
 ### 1. 准备
 
@@ -98,10 +98,9 @@ python ../fp_filter/train_fp_filter.py ^
 - **`outputs/fp_filter/last.pth`**：最后一轮模型。
 - **`outputs/fp_filter/history.json`**：每轮 train/val 的 loss 与 accuracy。
 
-## 模型与数据说明
+## 数据说明
 
 - **Patch 尺寸**：默认 96×96。可在第一步、第二步用同一 `--patch-size` 修改。
-- **二分类网络**：`tools/fp_filter/model.py` 中的轻量 CNN（若干 Conv+BN+ReLU+Pool，最后全连接 2 类）。如需更大/更小模型，可在此文件内修改或替换。
 - **数据增强**：训练时仅做随机水平翻转；如需更多增强，可修改 `fp_filter/dataset.py` 中的 `get_default_transform`。
 
 ---
@@ -309,8 +308,7 @@ python hybrid_predict.py ^
 ### CSV→YOLO 脚本选择与 `hybrid_predict.py` 可视化说明
 
 - **脚本选择**：
+
   - 使用 `fp_filter/csv_to_original_yolo.py`（或 `run_inference_pipeline.py` 的 Stage5 输出）时，会把裁剪图坐标加上 `--crop-left` / `--crop-top` 的偏移并归一化到原图尺寸，生成 `*_orig_yolo_labels` 子目录，适用于 WASB+FP 在裁剪图场景下的离线融合流程。
   - 若仅需把 CSV 中点直接转换为 YOLO txt（无需坐标偏移），可使用 `fp_filter/csv_to_yolo_txt.py`。
-
 - **hybrid_predict.py 的可视化**：`hybrid_predict.py` 默认会生成可视化图片与视频（前提：已安装 `opencv-python`）。如需关闭可使用 `--no-visualize` 或 `--no-visualize-video`；输出路径可通过 `--visualize-dir` / `--video-path` 指定，视频参数通过 `--video-fps` / `--video-fourcc` 控制。
-
